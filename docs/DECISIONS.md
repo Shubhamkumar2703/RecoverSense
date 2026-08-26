@@ -39,3 +39,18 @@ This supersedes the historical September 2 date in the earlier pre-build specifi
 **Status:** Accepted
 
 The previous project name was RecoverFlow. RecoverSense is the current permanent name.
+
+## ADR-009 — PostgreSQL exposed on host port 5433
+**Status:** Accepted
+
+A native (non-Docker) PostgreSQL Windows service already binds host port 5432, which caused Spring Boot to connect to the wrong instance and fail authentication. We do not stop or modify the native service. `infra/docker-compose.yml` and `spring.datasource.url` use port 5433.
+
+## ADR-010 — Application runs on port 8081
+**Status:** Accepted
+
+Host port 8080 is already occupied by a native `httpd.exe` service. We do not stop or modify that service. `server.port=8081`.
+
+## ADR-011 — JVM timezone pinned to Asia/Kolkata
+**Status:** Accepted
+
+The local JVM resolved the default timezone as the deprecated alias `Asia/Calcutta`, which PostgreSQL 17 rejects during the JDBC session `SET TimeZone`, breaking Flyway migrations. Fixed via `-Duser.timezone=Asia/Kolkata` in `backend/pom.xml` for both `maven-surefire-plugin` and `spring-boot-maven-plugin`.

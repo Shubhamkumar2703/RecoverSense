@@ -11,6 +11,7 @@ Read:
 6. VERIFICATION_SPEC.md
 7. SCOPE.md
 8. PROJECT_STATE.md
+9. DEVELOPMENT_LOG.md (most recent entry)
 
 ## Development loop
 

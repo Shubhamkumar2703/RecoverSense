@@ -1,7 +1,9 @@
 # RecoverSense — Project State
 
+> Last updated: 2026-08-27
+
 ## Current phase
-FOUNDATION
+INFRASTRUCTURE COMPLETE → DOMAIN MODEL NEXT
 
 ## DONE
 - Product concept established
@@ -11,23 +13,25 @@ FOUNDATION
 - Frontend mockup/reference established
 - Project renamed to RecoverSense
 - Pre-code repository package prepared
+- Git initialized
+- Backend skeleton created (Spring Boot 4.1.1, Java 21, Maven Wrapper 3.9.16)
+- PostgreSQL 17 running via Docker (`recoversense-postgres`, host port 5433)
+- Flyway + JPA wired and verified against the real database
+- JVM timezone fixed (Asia/Kolkata) for Surefire and spring-boot:run
+- Application boots cleanly on port 8081
+- `mvnw clean test` → BUILD SUCCESS
+- `mvnw spring-boot:run` → starts and serves `/actuator/health`, `/actuator/info`
 
 ## IN PROGRESS
-- Local repository setup
-- Git initialization
-- Environment verification
+- None — infrastructure checkpoint closed
 
 ## NEXT
-1. Initialize Git
-2. Verify Java 21
-3. Verify Maven
-4. Verify Node/npm
-5. Verify Docker availability
-6. Create backend skeleton
-7. Create frontend skeleton
-8. Configure PostgreSQL
-9. Add first health endpoint
-10. Add first domain model
+1. Read PRODUCT_SPEC.md, DATA_MODEL.md, and reference mockups
+2. Identify core domain entities (payment, subscription, recovery case, diagnosis, policy check, execution, verification, audit event)
+3. Define relationships and invariants
+4. Write first Flyway migration for the domain schema
+5. Add first domain entity + repository + test
+6. Only then start service layer (diagnosis → strategy → policy → execution)
 
 ## BLOCKED
 None currently.
@@ -55,3 +59,22 @@ None currently.
 - final API schemas
 - exact package naming
 - deployment target
+
+## Environment checkpoint
+
+| Component | Value |
+|---|---|
+| Java | 21 (Temurin) |
+| Maven | Wrapper 3.9.16 |
+| Spring Boot | 4.1.1 |
+| PostgreSQL | 17, container `recoversense-postgres`, host port `5433` |
+| Application port | `8081` |
+| JVM timezone | `Asia/Kolkata` |
+| Flyway | enabled, connection verified |
+| Actuator | `/actuator/health`, `/actuator/info` |
+
+Rationale for the non-default ports/timezone is recorded in [DECISIONS.md](DECISIONS.md) (ADR-009, ADR-010, ADR-011).
+
+## Rule
+
+Do not modify infrastructure unless a real blocker is discovered. Infrastructure is green. Focus moves to the domain model.
