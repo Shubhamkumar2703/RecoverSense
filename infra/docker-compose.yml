@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:17
+    container_name: recoversense-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: recoversense
+      POSTGRES_USER: recoversense
+      POSTGRES_PASSWORD: recoversense_local
+    ports:
+      - "5433:5432"
+    volumes:
+      - recoversense_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U recoversense -d recoversense" ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  recoversense_postgres_data:
