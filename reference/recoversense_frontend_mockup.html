@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RecoverSense — Revenue Recovery</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #f6f7f9;
+    color: #17191c;
+  }
+  .app { display: flex; min-height: 100vh; }
+  .sidebar {
+    width: 245px; background: #111315; color: #fff; padding: 22px 16px;
+    position: fixed; inset: 0 auto 0 0;
+  }
+  .brand { font-size: 21px; font-weight: 800; margin: 0 8px 6px; }
+  .brand span { color: #64d2a3; }
+  .tagline { color: #8f959c; font-size: 11px; margin: 0 8px 30px; }
+  .nav-title { color: #686e75; font-size: 10px; font-weight: 700; margin: 22px 10px 8px; text-transform: uppercase; letter-spacing: .08em; }
+  .nav a {
+    display: block; color: #aeb4bb; text-decoration: none; padding: 10px 11px;
+    border-radius: 8px; font-size: 13px; margin: 3px 0;
+  }
+  .nav a.active, .nav a:hover { background: #25292d; color: #fff; }
+  .status {
+    position: absolute; left: 16px; right: 16px; bottom: 18px;
+    border: 1px solid #30353a; border-radius: 9px; padding: 11px;
+    font-size: 11px; color: #aeb4bb;
+  }
+  .dot { display:inline-block; width:7px; height:7px; border-radius:50%; background:#64d2a3; margin-right:6px; }
+  main { margin-left: 245px; width: calc(100% - 245px); padding: 28px 32px; }
+  .topbar { display:flex; justify-content:space-between; align-items:center; margin-bottom:25px; }
+  h1 { font-size: 25px; margin: 0 0 4px; }
+  .sub { color:#737980; font-size:13px; }
+  .sixth-sense { color:#177b59; font-size:12.5px; font-style:italic; margin-top:6px; max-width:520px; }
+  .actions { display:flex; gap:8px; }
+  button {
+    border:1px solid #dfe2e6; background:#fff; border-radius:7px; padding:9px 13px;
+    font-weight:650; cursor:pointer;
+  }
+  button.primary { background:#17191c; color:white; border-color:#17191c; }
+  .metrics { display:grid; grid-template-columns: repeat(4, 1fr); gap:14px; margin-bottom:18px; }
+  .card {
+    background:#fff; border:1px solid #e4e6e9; border-radius:10px; padding:17px;
+    box-shadow: 0 1px 2px rgba(0,0,0,.02);
+  }
+  .metric-label { color:#777d84; font-size:11px; font-weight:650; text-transform:uppercase; letter-spacing:.04em; }
+  .metric-value { font-size:25px; font-weight:800; margin:8px 0 4px; }
+  .metric-foot { color:#6d747b; font-size:11px; }
+  .positive { color:#17815c; }
+  .grid { display:grid; grid-template-columns: 1.5fr 1fr; gap:18px; margin-bottom:18px; }
+  .card-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; }
+  .card-title { font-size:14px; font-weight:750; }
+  .muted { color:#777d84; font-size:11px; }
+  .bars { height:160px; display:flex; align-items:end; gap:15px; padding:15px 8px 0; border-bottom:1px solid #eee; }
+  .bar-wrap { flex:1; height:100%; display:flex; align-items:end; justify-content:center; }
+  .bar { width:55%; max-width:42px; background:#cfd4d9; border-radius:5px 5px 0 0; }
+  .bar.highlight { background:#64d2a3; }
+  .legend { display:flex; justify-content:space-between; padding:9px 8px 0; color:#8a9096; font-size:10px; }
+  .breakdown { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .break-item { border:1px solid #eceef0; border-radius:8px; padding:12px; }
+  .break-num { font-size:19px; font-weight:800; }
+  .break-name { font-size:11px; color:#747a80; margin-top:3px; }
+  .table-card { padding:0; overflow:hidden; }
+  .table-head { padding:17px; border-bottom:1px solid #e7e9eb; display:flex; justify-content:space-between; }
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  th { color:#7a8087; text-align:left; font-size:10px; text-transform:uppercase; letter-spacing:.04em; background:#fafafa; }
+  th, td { padding:13px 17px; border-bottom:1px solid #eef0f2; }
+  .pill { padding:4px 7px; border-radius:99px; font-size:10px; font-weight:750; display:inline-block; }
+  .pill.green { background:#e7f7f0; color:#177b59; }
+  .pill.yellow { background:#fff6dd; color:#916d10; }
+  .pill.gray { background:#eef0f2; color:#646b72; }
+  .pill.red { background:#fdeaea; color:#a13e3e; }
+  .action-link { color:#343a40; font-weight:700; cursor:pointer; }
+  .bottom { display:grid; grid-template-columns: 1fr 1fr; gap:18px; margin-top:18px; }
+  .decision {
+    background:#151719; color:white; border-radius:10px; padding:18px;
+  }
+  .decision .eyebrow { color:#64d2a3; font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.07em; }
+  .decision h2 { font-size:18px; margin:7px 0; }
+  .decision p { color:#aeb4bb; font-size:12px; line-height:1.55; }
+  .decision-row { display:flex; justify-content:space-between; border-top:1px solid #303438; padding:9px 0; font-size:11px; }
+  .decision-row span:first-child { color:#8f959c; }
+  .audit { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:10px; line-height:1.8; }
+  .audit .time { color:#8a9096; }
+  .audit .ok { color:#1b8a62; font-weight:700; }
+  .audit .event { color:#34393e; }
+  @media(max-width:900px) {
+    .sidebar { width:190px; } main { margin-left:190px; width:calc(100% - 190px); }
+    .metrics { grid-template-columns:1fr 1fr; }
+    .grid,.bottom { grid-template-columns:1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">Recover<span>Sense</span></div>
+    <div class="tagline">A sixth sense for revenue recovery</div>
+
+    <div class="nav-title">Workspace</div>
+    <div class="nav">
+      <a class="active" href="#">Overview</a>
+      <a href="#">At-risk payments</a>
+      <a href="#">Recovery cases</a>
+      <a href="#">Audit trail</a>
+      <a href="#">Metrics</a>
+    </div>
+
+    <div class="nav-title">System</div>
+    <div class="nav">
+      <a href="#">Policy rules</a>
+      <a href="#">Integrations</a>
+      <a href="#">Settings</a>
+    </div>
+
+    <div class="status"><span class="dot"></span>Razorpay Test Mode connected</div>
+  </aside>
+
+  <main>
+    <div class="topbar">
+      <div>
+        <h1>Recovery Overview</h1>
+        <div class="sub">Live view of revenue at risk and recovery decisions</div>
+        <div class="sixth-sense">RecoverSense gives revenue recovery a sixth sense — it understands what went wrong before deciding what to do next.</div>
+      </div>
+      <div class="actions">
+        <button>Export audit</button>
+        <button class="primary">Run recovery batch</button>
+      </div>
+    </div>
+
+    <section class="metrics">
+      <div class="card">
+        <div class="metric-label">Revenue at risk</div>
+        <div class="metric-value">₹62,000</div>
+        <div class="metric-foot">42 failed payments</div>
+      </div>
+      <div class="card">
+        <div class="metric-label">Recovered</div>
+        <div class="metric-value">₹47,500</div>
+        <div class="metric-foot positive">76.6% recovery rate</div>
+      </div>
+      <div class="card">
+        <div class="metric-label">Actions verified</div>
+        <div class="metric-value">100%</div>
+        <div class="metric-foot positive">37 / 37 successful checks</div>
+      </div>
+      <div class="card">
+        <div class="metric-label">Policy violations</div>
+        <div class="metric-value">0</div>
+        <div class="metric-foot">All actions bounded</div>
+      </div>
+    </section>
+
+    <section class="grid">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Recovery performance</div>
+          <div class="muted">Last 7 batches</div>
+        </div>
+        <div class="bars">
+          <div class="bar-wrap"><div class="bar" style="height:42%"></div></div>
+          <div class="bar-wrap"><div class="bar" style="height:58%"></div></div>
+          <div class="bar-wrap"><div class="bar" style="height:49%"></div></div>
+          <div class="bar-wrap"><div class="bar" style="height:70%"></div></div>
+          <div class="bar-wrap"><div class="bar" style="height:62%"></div></div>
+          <div class="bar-wrap"><div class="bar" style="height:78%"></div></div>
+          <div class="bar-wrap"><div class="bar highlight" style="height:91%"></div></div>
+        </div>
+        <div class="legend"><span>Aug 20</span><span>Aug 26</span></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Recovery strategy mix</div>
+          <div class="muted">37 actions</div>
+        </div>
+        <div class="breakdown">
+          <div class="break-item"><div class="break-num">14</div><div class="break-name">Wait / Retry</div></div>
+          <div class="break-item"><div class="break-num">9</div><div class="break-name">Payment Link</div></div>
+          <div class="break-item"><div class="break-num">6</div><div class="break-name">Mandate Recovery</div></div>
+          <div class="break-item"><div class="break-num">8</div><div class="break-name">Escalated / Stopped</div></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card table-card">
+      <div class="table-head">
+        <div class="card-title">Recent recovery cases</div>
+        <div class="muted">Showing 5 of 42</div>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Payment</th>
+            <th>Amount</th>
+            <th>Failure</th>
+            <th>AI recommendation</th>
+            <th>Policy</th>
+            <th>Outcome</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><b>pay_001</b></td><td>₹2,499</td>
+            <td>Mandate revoked</td>
+            <td><span class="pill yellow">Re-acquire mandate</span></td>
+            <td><span class="pill green">Allowed</span></td>
+            <td><span class="pill green">Verified</span></td>
+            <td class="action-link">View</td>
+          </tr>
+          <tr>
+            <td><b>pay_002</b></td><td>₹1,499</td>
+            <td>Insufficient funds</td>
+            <td><span class="pill gray">Wait + retry</span></td>
+            <td><span class="pill green">Allowed</span></td>
+            <td><span class="pill yellow">Pending</span></td>
+            <td class="action-link">View</td>
+          </tr>
+          <tr>
+            <td><b>pay_003</b></td><td>₹5,000</td>
+            <td>Repeated failure</td>
+            <td><span class="pill yellow">Payment link</span></td>
+            <td><span class="pill green">Allowed</span></td>
+            <td><span class="pill green">Verified</span></td>
+            <td class="action-link">View</td>
+          </tr>
+          <tr>
+            <td><b>pay_004</b></td><td>₹75,000</td>
+            <td>Temporary failure</td>
+            <td><span class="pill red">Escalate</span></td>
+            <td><span class="pill green">Allowed</span></td>
+            <td><span class="pill gray">Human</span></td>
+            <td class="action-link">View</td>
+          </tr>
+          <tr>
+            <td><b>pay_005</b></td><td>₹999</td>
+            <td>Customer cancelled</td>
+            <td><span class="pill yellow">Payment link</span></td>
+            <td><span class="pill green">Allowed</span></td>
+            <td><span class="pill green">Verified</span></td>
+            <td class="action-link">View</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="bottom">
+      <div class="decision">
+        <div class="eyebrow">Selected case · pay_001</div>
+        <h2>Re-acquire mandate</h2>
+        <p>
+          The existing mandate is revoked while the subscription remains active.
+          Repeated retries would not address the underlying failure.
+        </p>
+        <div class="decision-row"><span>AI diagnosis</span><b>MANDATE_INVALID · 94%</b></div>
+        <div class="decision-row"><span>Policy</span><b>ALLOW</b></div>
+        <div class="decision-row"><span>Amount limit</span><b>₹2,499 / ₹50,000</b></div>
+        <div class="decision-row"><span>Verification</span><b>PASS</b></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Decision audit trail</div>
+          <div class="muted">pay_001</div>
+        </div>
+        <div class="audit">
+          <div><span class="time">10:02:11</span> <span class="event">FAILURE_DETECTED</span></div>
+          <div><span class="time">10:02:11</span> <span class="event">AI_DIAGNOSIS_COMPLETE</span></div>
+          <div><span class="time">10:02:12</span> <span class="event">STRATEGY_SELECTED</span></div>
+          <div><span class="time">10:02:12</span> <span class="event">POLICY_CHECK</span> → <span class="ok">ALLOWED</span></div>
+          <div><span class="time">10:02:13</span> <span class="event">ACTION_EXECUTED</span></div>
+          <div><span class="time">10:02:14</span> <span class="event">BUSINESS_STATE_VERIFIED</span> → <span class="ok">PASS</span></div>
+          <div><span class="time">10:02:14</span> <span class="event">RECOVERY_COMPLETED</span> → <span class="ok">VERIFIED</span></div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+</body>
+</html>

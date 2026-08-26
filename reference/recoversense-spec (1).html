@@ -1,0 +1,879 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RecoverSense — Project Specification</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#F6F4EE;
+    --paper-2:#EEEBE2;
+    --ink:#171B22;
+    --ink-soft:#565C6B;
+    --ink-faint:#8B8F9B;
+    --line:#D9D6CB;
+    --line-strong:#C3BFB2;
+    --recover:#1F6E52;
+    --recover-soft:#E4EFE9;
+    --risk:#9A4A1F;
+    --risk-soft:#F3E7DC;
+    --mandate:#37439E;
+    --mandate-soft:#E7E8F5;
+    --font-display:'Newsreader', Georgia, serif;
+    --font-body:'Inter', -apple-system, sans-serif;
+    --font-mono:'IBM Plex Mono', 'SF Mono', monospace;
+    --maxw:920px;
+  }
+
+  *{box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
+  body{
+    margin:0;
+    background:var(--paper);
+    color:var(--ink);
+    font-family:var(--font-body);
+    font-size:16px;
+    line-height:1.6;
+    -webkit-font-smoothing:antialiased;
+  }
+
+  ::selection{background:var(--recover-soft);color:var(--recover);}
+
+  a{color:inherit;}
+
+  /* ---------- layout shell ---------- */
+  .shell{
+    display:grid;
+    grid-template-columns:220px 1fr;
+    max-width:1280px;
+    margin:0 auto;
+  }
+  @media (max-width:960px){
+    .shell{grid-template-columns:1fr;}
+    .toc{display:none;}
+  }
+
+  .toc{
+    position:sticky;
+    top:0;
+    height:100vh;
+    overflow-y:auto;
+    padding:48px 20px 40px 32px;
+    font-family:var(--font-mono);
+    font-size:12px;
+    letter-spacing:.02em;
+  }
+  .toc-label{
+    color:var(--ink-faint);
+    text-transform:uppercase;
+    letter-spacing:.12em;
+    font-size:10px;
+    margin-bottom:18px;
+  }
+  .toc a{
+    display:block;
+    color:var(--ink-soft);
+    text-decoration:none;
+    padding:6px 0;
+    border-left:2px solid transparent;
+    padding-left:12px;
+    margin-left:-13px;
+    transition:color .15s ease, border-color .15s ease;
+  }
+  .toc a:hover, .toc a.active{
+    color:var(--ink);
+    border-left-color:var(--recover);
+  }
+  .toc .num{color:var(--ink-faint);margin-right:6px;}
+
+  main{
+    padding:0 32px 120px;
+    max-width:var(--maxw);
+  }
+  @media (max-width:640px){ main{padding:0 20px 90px;} }
+
+  /* ---------- masthead ---------- */
+  .masthead{
+    padding:72px 0 40px;
+    border-bottom:1px solid var(--line);
+  }
+  .kicker{
+    font-family:var(--font-mono);
+    font-size:12px;
+    letter-spacing:.14em;
+    text-transform:uppercase;
+    color:var(--recover);
+    margin-bottom:18px;
+    display:flex;
+    align-items:center;
+    gap:10px;
+  }
+  .kicker::before{
+    content:"";
+    width:7px;height:7px;border-radius:50%;
+    background:var(--recover);
+    box-shadow:0 0 0 3px var(--recover-soft);
+  }
+  h1.title{
+    font-family:var(--font-display);
+    font-weight:500;
+    font-size:clamp(38px,6vw,58px);
+    line-height:1.05;
+    margin:0 0 18px;
+    letter-spacing:-0.01em;
+  }
+  .subtitle{
+    font-size:19px;
+    color:var(--ink-soft);
+    max-width:620px;
+    margin:0 0 18px;
+  }
+  .tagline{
+    font-family:var(--font-display);
+    font-style:italic;
+    font-size:17px;
+    color:var(--recover);
+    max-width:560px;
+    margin:0 0 30px;
+    line-height:1.5;
+  }
+  .meta-row{
+    display:flex;
+    flex-wrap:wrap;
+    gap:10px 28px;
+    font-family:var(--font-mono);
+    font-size:12.5px;
+    color:var(--ink-faint);
+  }
+  .meta-row span b{color:var(--ink-soft);font-weight:500;}
+
+  /* ---------- audit trail hero ---------- */
+  .ledger{
+    margin:44px 0 0;
+    background:var(--ink);
+    border-radius:6px;
+    padding:26px 26px 22px;
+    color:#DCE3DE;
+    font-family:var(--font-mono);
+    font-size:13px;
+    overflow-x:auto;
+    position:relative;
+  }
+  .ledger-title{
+    font-family:var(--font-body);
+    font-size:11px;
+    letter-spacing:.1em;
+    text-transform:uppercase;
+    color:#7A8A80;
+    margin-bottom:16px;
+  }
+  .ledger-line{
+    display:grid;
+    grid-template-columns:88px 1fr;
+    gap:16px;
+    padding:5px 0;
+    white-space:nowrap;
+  }
+  .ledger-line .t{color:#7A8A80;}
+  .ledger-line .evt{color:#DCE3DE;}
+  .ledger-line .tag{
+    display:inline-block;
+    padding:1px 7px;
+    border-radius:3px;
+    font-size:11px;
+    margin-left:8px;
+  }
+  .tag-recover{background:rgba(46,138,105,.22);color:#6FDBAF;}
+  .tag-mandate{background:rgba(84,99,214,.22);color:#9FADF5;}
+  .tag-pass{background:rgba(46,138,105,.22);color:#6FDBAF;}
+  .tag-hold{background:rgba(184,120,40,.22);color:#E8B47B;}
+
+  /* ---------- sections ---------- */
+  section{padding:64px 0;border-bottom:1px solid var(--line);}
+  section:last-of-type{border-bottom:none;}
+  .sec-head{
+    display:flex;
+    align-items:baseline;
+    gap:14px;
+    margin-bottom:8px;
+  }
+  .sec-num{
+    font-family:var(--font-mono);
+    font-size:13px;
+    color:var(--ink-faint);
+  }
+  h2{
+    font-family:var(--font-display);
+    font-weight:500;
+    font-size:30px;
+    margin:0;
+    letter-spacing:-.005em;
+  }
+  .sec-dek{
+    color:var(--ink-soft);
+    max-width:640px;
+    margin:14px 0 32px;
+    font-size:16px;
+  }
+  h3{
+    font-family:var(--font-body);
+    font-weight:600;
+    font-size:17px;
+    margin:34px 0 12px;
+  }
+  p{margin:0 0 16px;color:var(--ink);}
+  p.soft{color:var(--ink-soft);}
+
+  /* ---------- competitive matrix ---------- */
+  .matrix{
+    width:100%;
+    border-collapse:collapse;
+    font-size:14px;
+    margin:18px 0 8px;
+  }
+  .matrix th, .matrix td{
+    border:1px solid var(--line);
+    padding:10px 12px;
+    text-align:left;
+    vertical-align:top;
+  }
+  .matrix th{
+    font-family:var(--font-mono);
+    font-size:11.5px;
+    text-transform:uppercase;
+    letter-spacing:.04em;
+    color:var(--ink-soft);
+    background:var(--paper-2);
+    font-weight:500;
+  }
+  .matrix td.us{background:var(--recover-soft);font-weight:500;}
+  .yes{color:var(--recover);font-weight:600;}
+  .no{color:var(--ink-faint);}
+  .partial{color:var(--risk);font-weight:600;}
+
+  /* ---------- pipeline ---------- */
+  .pipeline{
+    display:flex;
+    flex-wrap:wrap;
+    gap:0;
+    margin:28px 0 8px;
+    counter-reset:stage;
+  }
+  .stage{
+    flex:1 1 150px;
+    position:relative;
+    padding:20px 18px 18px;
+    border:1px solid var(--line);
+    background:var(--paper-2);
+  }
+  .stage + .stage{border-left:none;}
+  .stage:first-child{border-radius:6px 0 0 6px;}
+  .stage:last-child{border-radius:0 6px 6px 0;}
+  .stage-num{
+    font-family:var(--font-mono);
+    font-size:11px;
+    color:var(--ink-faint);
+    margin-bottom:8px;
+  }
+  .stage-name{font-weight:600;font-size:14.5px;margin-bottom:6px;}
+  .stage-desc{font-size:12.5px;color:var(--ink-soft);line-height:1.5;}
+  .stage.accent{background:var(--mandate-soft);}
+  @media (max-width:760px){
+    .pipeline{flex-direction:column;}
+    .stage + .stage{border-left:1px solid var(--line);border-top:none;}
+    .stage:first-child{border-radius:6px 6px 0 0;}
+    .stage:last-child{border-radius:0 0 6px 6px;}
+  }
+
+  /* ---------- decision table ---------- */
+  .decision-table{
+    width:100%;
+    border-collapse:collapse;
+    font-size:14px;
+    margin:18px 0;
+  }
+  .decision-table th, .decision-table td{
+    padding:11px 14px;
+    border-bottom:1px solid var(--line);
+    text-align:left;
+  }
+  .decision-table th{
+    font-family:var(--font-mono);
+    font-size:11px;
+    text-transform:uppercase;
+    letter-spacing:.04em;
+    color:var(--ink-faint);
+    font-weight:500;
+  }
+  .strategy-pill{
+    display:inline-block;
+    font-family:var(--font-mono);
+    font-size:11.5px;
+    padding:3px 9px;
+    border-radius:20px;
+    background:var(--paper-2);
+    border:1px solid var(--line-strong);
+  }
+  .strategy-pill.re{background:var(--mandate-soft);border-color:transparent;color:var(--mandate);}
+  .strategy-pill.esc{background:var(--risk-soft);border-color:transparent;color:var(--risk);}
+  .strategy-pill.stop{background:#E9E7E1;border-color:transparent;color:var(--ink-faint);}
+
+  /* ---------- code / policy block ---------- */
+  pre{
+    background:var(--ink);
+    color:#DCE3DE;
+    font-family:var(--font-mono);
+    font-size:13px;
+    line-height:1.65;
+    padding:20px 22px;
+    border-radius:6px;
+    overflow-x:auto;
+    margin:18px 0;
+  }
+  pre .c1{color:#7A8A80;}
+  code{font-family:var(--font-mono);font-size:.92em;background:var(--paper-2);padding:1px 6px;border-radius:3px;}
+
+  /* ---------- metric grid ---------- */
+  .metric-grid{
+    display:grid;
+    grid-template-columns:repeat(auto-fill,minmax(220px,1fr));
+    gap:1px;
+    background:var(--line);
+    border:1px solid var(--line);
+    margin:18px 0;
+  }
+  .metric-card{
+    background:var(--paper);
+    padding:18px 18px 16px;
+  }
+  .metric-card .label{
+    font-family:var(--font-mono);
+    font-size:11px;
+    text-transform:uppercase;
+    letter-spacing:.05em;
+    color:var(--ink-faint);
+    margin-bottom:8px;
+  }
+  .metric-card .def{font-size:13.5px;color:var(--ink-soft);line-height:1.5;}
+
+  /* ---------- lists ---------- */
+  ul.clean{list-style:none;margin:0 0 16px;padding:0;}
+  ul.clean li{
+    position:relative;
+    padding-left:20px;
+    margin-bottom:10px;
+    color:var(--ink);
+  }
+  ul.clean li::before{
+    content:"—";
+    position:absolute;left:0;color:var(--ink-faint);
+  }
+  .two-col{display:grid;grid-template-columns:1fr 1fr;gap:32px;}
+  @media (max-width:700px){.two-col{grid-template-columns:1fr;}}
+  .col-head{
+    font-family:var(--font-mono);
+    font-size:11.5px;
+    text-transform:uppercase;
+    letter-spacing:.06em;
+    margin-bottom:14px;
+    display:flex;
+    align-items:center;
+    gap:8px;
+  }
+  .col-head.build{color:var(--recover);}
+  .col-head.cut{color:var(--risk);}
+  .col-head::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;}
+
+  /* ---------- roadmap ---------- */
+  .roadmap{margin:22px 0;}
+  .rday{
+    display:grid;
+    grid-template-columns:120px 1fr;
+    gap:20px;
+    padding:16px 0;
+    border-top:1px solid var(--line);
+  }
+  .rday:last-child{border-bottom:1px solid var(--line);}
+  .rday .date{
+    font-family:var(--font-mono);
+    font-size:12.5px;
+    color:var(--ink-faint);
+    padding-top:2px;
+  }
+  .rday .focus{font-weight:600;font-size:14.5px;margin-bottom:4px;}
+  .rday .out{font-size:13.5px;color:var(--ink-soft);}
+
+  /* ---------- callout ---------- */
+  .callout{
+    border-left:3px solid var(--mandate);
+    background:var(--mandate-soft);
+    padding:16px 20px;
+    border-radius:0 6px 6px 0;
+    margin:22px 0;
+    font-size:14.5px;
+  }
+  .callout b{color:var(--mandate);}
+  .callout.warn{border-left-color:var(--risk);background:var(--risk-soft);}
+  .callout.warn b{color:var(--risk);}
+
+  /* ---------- footer ---------- */
+  footer{
+    padding:48px 0 20px;
+    font-family:var(--font-mono);
+    font-size:12px;
+    color:var(--ink-faint);
+  }
+</style>
+</head>
+<body>
+
+<div class="shell">
+  <nav class="toc" id="toc">
+    <div class="toc-label">RecoverSense · Spec</div>
+    <a href="#problem"><span class="num">01</span>Problem</a>
+    <a href="#landscape"><span class="num">02</span>Landscape</a>
+    <a href="#thesis"><span class="num">03</span>Thesis</a>
+    <a href="#architecture"><span class="num">04</span>Architecture</a>
+    <a href="#decisions"><span class="num">05</span>Decision logic</a>
+    <a href="#policy"><span class="num">06</span>Policy engine</a>
+    <a href="#verification"><span class="num">07</span>Verification</a>
+    <a href="#metrics"><span class="num">08</span>Metrics</a>
+    <a href="#scope"><span class="num">09</span>Scope</a>
+    <a href="#stack"><span class="num">10</span>Tech stack</a>
+    <a href="#roadmap"><span class="num">11</span>Build plan</a>
+  </nav>
+
+  <main>
+    <header class="masthead">
+      <div class="kicker">Razorpay AI Buildathon 2026 · Track 03 — AI Revenue Recovery</div>
+      <h1 class="title">RecoverSense</h1>
+      <p class="subtitle">An adaptive recovery decision engine for Indian recurring payments — it diagnoses why a payment failed, chooses a recovery strategy under merchant-defined policy, executes it, and verifies the money actually came back.</p>
+      <p class="tagline">RecoverSense gives revenue recovery a sixth sense — it understands what went wrong before deciding what to do next.</p>
+      <div class="meta-row">
+        <span><b>Author</b> Shubham Kumar</span>
+        <span><b>Deadline</b> Sep 2, 2026</span>
+        <span><b>Status</b> Pre-build spec</span>
+        <span><b>Version</b> 0.1</span>
+      </div>
+
+      <div class="ledger">
+        <div class="ledger-title">Live audit trail — sub_8f21c, ₹2,499/mo</div>
+        <div class="ledger-line"><span class="t">10:02:11</span><span class="evt">charge.failed <span class="tag tag-mandate">reason: mandate_revoked</span></span></div>
+        <div class="ledger-line"><span class="t">10:02:12</span><span class="evt">diagnosis → MANDATE_INVALID <span class="tag tag-pass">confidence 0.94</span></span></div>
+        <div class="ledger-line"><span class="t">10:02:12</span><span class="evt">strategy selected → RE_ACQUIRE_MANDATE</span></div>
+        <div class="ledger-line"><span class="t">10:02:12</span><span class="evt">policy check <span class="tag tag-pass">7/7 passed</span></span></div>
+        <div class="ledger-line"><span class="t">10:02:13</span><span class="evt">subscription.cancel → sub_8f21c</span></div>
+        <div class="ledger-line"><span class="t">10:02:14</span><span class="evt">subscription.create → sub_9a04f <span class="tag tag-hold">awaiting auth</span></span></div>
+        <div class="ledger-line"><span class="t">10:04:32</span><span class="evt">customer authorization received</span></div>
+        <div class="ledger-line"><span class="t">10:04:35</span><span class="evt">mandate.active <span class="tag tag-recover">verified</span></span></div>
+        <div class="ledger-line"><span class="t">10:05:01</span><span class="evt">₹2,499 recovered <span class="tag tag-recover">RECOVERED</span></span></div>
+      </div>
+    </header>
+
+    <!-- 01 PROBLEM -->
+    <section id="problem">
+      <div class="sec-head"><span class="sec-num">01</span><h2>The problem</h2></div>
+      <p class="sec-dek">Revenue doesn't leak in one clean step. A card declines, a UPI Autopay mandate lapses, an eNACH debit bounces, a subscription silently goes dormant. Most systems answer this with one move: retry, on a timer, regardless of why it failed.</p>
+
+      <p>A blind retry on <code>insufficient_funds</code> is reasonable. The same blind retry on <code>mandate_revoked</code> is wasted — the underlying authorization no longer exists, so nothing will succeed until the customer re-authorizes. Every payment platform we examined optimizes <b>when</b> to retry. Almost none of them make an explicit, auditable decision about <b>what kind of recovery action a specific failure actually needs.</b></p>
+
+      <p class="soft">For Indian recurring payments specifically, this gap is sharper: UPI Autopay and eNACH mandates can be revoked, expired, or cancelled outright — a state retry logic can't fix, and re-acquiring a mandate is a materially different workflow (fresh AFA authentication) from re-charging a card.</p>
+    </section>
+
+    <!-- 02 LANDSCAPE -->
+    <section id="landscape">
+      <div class="sec-head"><span class="sec-num">02</span><h2>What already exists</h2></div>
+      <p class="sec-dek">Verified against current product docs before scoping this. Being upfront about what's already shipped is the difference between a defensible pitch and an embarrassing Q&A.</p>
+
+      <table class="matrix">
+        <tr>
+          <th>Capability</th>
+          <th>Razorpay<br>Agent Studio</th>
+          <th>Stripe<br>Revenue Recovery</th>
+          <th class="us">RecoverSense</th>
+        </tr>
+        <tr>
+          <td>Retry-timing optimization</td>
+          <td><span class="yes">Documented</span></td>
+          <td><span class="yes">Documented</span></td>
+          <td class="us">Not our focus</td>
+        </tr>
+        <tr>
+          <td>Customer nudges (email / update link)</td>
+          <td><span class="yes">Documented</span></td>
+          <td><span class="yes">Documented</span></td>
+          <td class="us">Included, failure-triggered</td>
+        </tr>
+        <tr>
+          <td>Explicit multi-action decision (retry / nudge / re-acquire / escalate / stop)</td>
+          <td><span class="no">Not documented</span></td>
+          <td><span class="no">Not documented</span></td>
+          <td class="us"><span class="yes">Core feature</span></td>
+        </tr>
+        <tr>
+          <td>Pre-execution policy / guardrail gate</td>
+          <td><span class="no">Not documented</span></td>
+          <td><span class="no">Not documented</span></td>
+          <td class="us"><span class="yes">Core feature</span></td>
+        </tr>
+        <tr>
+          <td>Business-outcome verification (not just API 200)</td>
+          <td><span class="no">Not documented</span></td>
+          <td><span class="partial">Partial — analytics only</span></td>
+          <td class="us"><span class="yes">Core feature</span></td>
+        </tr>
+        <tr>
+          <td>Timestamped, explainable audit trail</td>
+          <td><span class="no">Not documented</span></td>
+          <td><span class="partial">Recovery analytics dashboard</span></td>
+          <td class="us"><span class="yes">Core feature</span></td>
+        </tr>
+        <tr>
+          <td>UPI Autopay / eNACH mandate re-acquisition as an explicit decision path</td>
+          <td><span class="no">Not documented</span></td>
+          <td><span class="no">N/A — card-centric</span></td>
+          <td class="us"><span class="yes">Hero scenario</span></td>
+        </tr>
+      </table>
+      <p class="soft" style="font-size:13px;margin-top:6px;">Table reflects publicly documented capabilities as of research date. Absence of documentation is not proof a capability doesn't exist internally — flagged accordingly wherever claimed.</p>
+    </section>
+
+    <!-- 03 THESIS -->
+    <section id="thesis">
+      <div class="sec-head"><span class="sec-num">03</span><h2>Thesis</h2></div>
+      <p class="sec-dek">The honest, defensible version of the pitch — no overclaiming.</p>
+
+      <div class="callout">
+        <b>Positioning statement.</b> Existing recovery systems optimize individual mechanisms — retry timing, dunning emails, card-update prompts. RecoverSense prototypes an explicit decision layer that evaluates the failure state and selects among multiple recovery actions under merchant-defined financial policy, then proves — not just claims — that the recovery worked.
+      </div>
+
+      <p>Three things carry the differentiation: <b>diagnosis before action</b> (classify the failure, don't assume it), <b>policy before execution</b> (an LLM proposes, a deterministic engine approves), and <b>verification before counting it as recovered</b> (check the business state changed, not just that an API call returned 200).</p>
+    </section>
+
+    <!-- 04 ARCHITECTURE -->
+    <section id="architecture">
+      <div class="sec-head"><span class="sec-num">04</span><h2>Architecture</h2></div>
+      <p class="sec-dek">Six stages. The LLM only occupies one of them — diagnosis. Everything that touches money is deterministic and logged.</p>
+
+      <div class="pipeline">
+        <div class="stage">
+          <div class="stage-num">01</div>
+          <div class="stage-name">Diagnosis</div>
+          <div class="stage-desc">LLM classifies the failure from Razorpay's <code>source</code> / <code>step</code> / <code>reason</code> payload + payment history into one of five failure types, with a confidence score.</div>
+        </div>
+        <div class="stage">
+          <div class="stage-num">02</div>
+          <div class="stage-name">Strategy</div>
+          <div class="stage-desc">Deterministic router maps diagnosis → one of five recovery strategies. No LLM in this step — same failure type, same strategy, every time.</div>
+        </div>
+        <div class="stage accent">
+          <div class="stage-num">03</div>
+          <div class="stage-name">Policy gate</div>
+          <div class="stage-desc">Checks the proposed action against retry limits, amount limits, subscription state, and duplicate-action protection before anything executes.</div>
+        </div>
+        <div class="stage">
+          <div class="stage-num">04</div>
+          <div class="stage-name">Execution</div>
+          <div class="stage-desc">Calls the real Razorpay test API where an endpoint exists; falls back to a clearly-labelled deterministic simulator where it doesn't (e.g. arbitrary mandate-state injection).</div>
+        </div>
+        <div class="stage">
+          <div class="stage-num">05</div>
+          <div class="stage-name">Verification</div>
+          <div class="stage-desc">Re-fetches state after execution and diffs expected vs. actual — the same pattern used to verify test outcomes in QA automation, applied to money movement.</div>
+        </div>
+        <div class="stage">
+          <div class="stage-num">06</div>
+          <div class="stage-name">Audit</div>
+          <div class="stage-desc">Every decision, check, and outcome above is written to an immutable, timestamped log — the artifact judges actually look at.</div>
+        </div>
+      </div>
+
+      <div class="callout">
+        <b>Why the LLM is boxed in.</b> An LLM proposing <code>REACQUIRE_MANDATE</code> is a suggestion, not an instruction. Nothing that moves money or changes subscription state executes without passing the deterministic policy engine first. This is the guardrail a judge will ask about — have the answer ready before they ask.
+      </div>
+    </section>
+
+    <!-- 05 DECISIONS -->
+    <section id="decisions">
+      <div class="sec-head"><span class="sec-num">05</span><h2>Decision logic</h2></div>
+      <p class="sec-dek">The failure-type → strategy mapping, locked before any code is written.</p>
+
+      <table class="decision-table">
+        <tr><th>Failure diagnosis</th><th>Signal</th><th>Strategy</th></tr>
+        <tr>
+          <td>Insufficient funds</td>
+          <td>1st–2nd attempt</td>
+          <td><span class="strategy-pill">WAIT_AND_RETRY</span></td>
+        </tr>
+        <tr>
+          <td>Insufficient funds</td>
+          <td>3rd+ attempt</td>
+          <td><span class="strategy-pill">PAYMENT_LINK</span></td>
+        </tr>
+        <tr>
+          <td>Payment-method issue (expired card, bad CVV)</td>
+          <td>any attempt</td>
+          <td><span class="strategy-pill">PAYMENT_LINK</span></td>
+        </tr>
+        <tr>
+          <td>Temporary / technical failure</td>
+          <td>timeout, gateway error</td>
+          <td><span class="strategy-pill">WAIT_AND_RETRY</span> (extended backoff)</td>
+        </tr>
+        <tr>
+          <td>Mandate issue (revoked, expired, cancelled)</td>
+          <td>active subscription</td>
+          <td><span class="strategy-pill re">RE_ACQUIRE_MANDATE</span></td>
+        </tr>
+        <tr>
+          <td>Repeated failure (3+ in 24h) or high amount</td>
+          <td>any type</td>
+          <td><span class="strategy-pill esc">ESCALATE</span></td>
+        </tr>
+        <tr>
+          <td>Subscription already cancelled</td>
+          <td>any type</td>
+          <td><span class="strategy-pill stop">STOP</span> — no attempt made</td>
+        </tr>
+      </table>
+
+      <p class="soft">The "avoided unnecessary attempts" metric (§08) comes directly from this table: every row that resolves to <span class="strategy-pill stop">STOP</span> or routes straight to <span class="strategy-pill esc">ESCALATE</span> instead of retrying is a wasted attempt the system chose not to make.</p>
+    </section>
+
+    <!-- 06 POLICY -->
+    <section id="policy">
+      <div class="sec-head"><span class="sec-num">06</span><h2>Policy engine</h2></div>
+      <p class="sec-dek">The LLM proposes an action; this is what has to approve it before anything executes.</p>
+
+<pre><span class="c1">// proposed action, from the diagnosis + strategy stages</span>
+{
+  "action": "REACQUIRE_MANDATE",
+  "subscription_id": "sub_8f21c",
+  "amount": 2499,
+  "reason": "mandate_revoked",
+  "confidence": 0.94
+}
+
+<span class="c1">// policy engine — deterministic, no LLM in this path</span>
+checks = {
+  retry_limit_not_exceeded:        retry_count &lt; 3,
+  subscription_state_valid:        subscription.status == "active",
+  customer_active:                 customer.is_active,
+  no_pending_reacquisition:        !has_pending_reacquisition(sub_id),
+  amount_within_policy:            amount &lt;= 50000,
+  <span class="c1">// money-movement actions only — guards against acting on stale state</span>
+  not_already_settled_elsewhere:   !payment_settled_via_other_channel(sub_id),
+  webhook_delay_window_respected:  time_since_last_webhook &gt;= min_wait_window
+}
+
+<span class="c1">// all must pass — any single failure blocks execution and logs why</span>
+approved = all(checks.values())</pre>
+
+      <p>Seven checks for the MVP. The first five gate <i>which</i> action is allowed: retry-count limit, amount ceiling, subscription-state validity, customer-active status, and duplicate-action protection (never trigger two mandate re-acquisitions on the same subscription at once). The last two exist specifically for actions that move money: don't retry or re-acquire if the payment already settled through another channel the agent hasn't seen yet, and don't act inside the window where a delayed webhook could still arrive and change the picture. Every check — passed or failed — is written to the audit log, not just the final verdict.</p>
+
+      <div class="callout">
+        <b>Why this matters beyond the checklist.</b> An LLM recommending an action off a snapshot of state is inherently working with slightly stale information — a customer could have paid via a different link, a webhook could be seconds from landing. The last two checks exist to stop the system from acting confidently on information that's already out of date. This is the difference between an agent that recommends and a system that's safe to let recommend things that move money.
+      </div>
+    </section>
+
+    <!-- SCOPE LOCK -->
+    <div class="callout warn" style="margin:0 0 0;">
+      <b>Scope lock — Aug 26.</b> The architecture and positioning in this document are final for the Sep 2 submission. The framing is deliberately PSP-agnostic — the policy and verification layer is architected behind a service interface, with Razorpay as the reference implementation, not a Razorpay-only feature — but no second payment gateway gets built or integrated before the deadline; that claim is proven by the architecture, not by a second integration. Re-litigating "is this differentiated enough" from here forward costs a day of thinking for zero days of building, and the deadline doesn't move. Next open question gets a one-line answer and a return to code, not a new research pass.
+    </div>
+
+    <!-- 07 VERIFICATION -->
+    <section id="verification">
+      <div class="sec-head"><span class="sec-num">07</span><h2>Verification</h2></div>
+      <p class="sec-dek">The part that turns "we called an API" into "we confirmed it worked" — inherited directly from prior QA automation work.</p>
+
+      <p>Every execution follows the same four-step check used in test automation: define the expected state, capture the actual state, diff them, record pass or fail. Applied here:</p>
+
+      <ul class="clean">
+        <li><b>Action</b> — the approved action was executed against the Razorpay test API (or simulator)</li>
+        <li><b>Expected state</b> — what should be true afterward (e.g. new subscription exists, status <code>authenticated</code>, correct customer, correct amount)</li>
+        <li><b>Actual state</b> — re-fetched via <code>GET /v1/subscriptions/{id}</code> after execution, not assumed from the write response</li>
+        <li><b>Result</b> — <code>VERIFIED</code> or <code>FAILED</code>, logged with the specific field that didn't match on failure</li>
+      </ul>
+
+      <div class="callout">
+        <b>Why this matters more than it sounds like it should.</b> A recovery system that logs "action executed" without checking the resulting state can silently over-report recovery. Verifying the actual subscription/mandate/payment state after every action is what makes the recovery-rate metric trustworthy rather than aspirational.
+      </div>
+    </section>
+
+    <!-- 08 METRICS -->
+    <section id="metrics">
+      <div class="sec-head"><span class="sec-num">08</span><h2>Metrics</h2></div>
+      <p class="sec-dek">What gets reported at the end — computed from the audit log, not asserted separately.</p>
+
+      <div class="metric-grid">
+        <div class="metric-card"><div class="label">Revenue at risk</div><div class="def">Total ₹ across all failed payments entering the system in the test run.</div></div>
+        <div class="metric-card"><div class="label">Recovered revenue</div><div class="def">₹ where the post-action state was independently verified, not just attempted.</div></div>
+        <div class="metric-card"><div class="label">Recovery rate</div><div class="def">Recovered ÷ at-risk, and separately, per strategy (retry / link / re-acquire).</div></div>
+        <div class="metric-card"><div class="label">Diagnosis accuracy</div><div class="def">Predicted failure type vs. ground-truth label on synthetic test data.</div></div>
+        <div class="metric-card"><div class="label">Strategy accuracy</div><div class="def">Predicted strategy vs. ground-truth optimal strategy for that failure.</div></div>
+        <div class="metric-card"><div class="label">Avoided unnecessary attempts</div><div class="def">Cases routed to STOP or ESCALATE instead of a wasted retry.</div></div>
+        <div class="metric-card"><div class="label">Policy violations blocked</div><div class="def">Proposed actions the policy engine rejected before execution, and why.</div></div>
+        <div class="metric-card"><div class="label">Verification success rate</div><div class="def">Share of executed actions whose resulting state matched expectation.</div></div>
+      </div>
+    </section>
+
+    <!-- 09 SCOPE -->
+    <section id="scope">
+      <div class="sec-head"><span class="sec-num">09</span><h2>Scope</h2></div>
+      <p class="sec-dek">What ships for Sep 2, and what's explicitly left out — stated up front so nothing gets discovered under deadline pressure.</p>
+
+      <div class="two-col">
+        <div>
+          <div class="col-head build">In scope</div>
+          <ul class="clean">
+            <li>5 failure types, 5 recovery strategies, 2 terminal states (escalate, stop)</li>
+            <li>Diagnosis via LLM against real Razorpay test-mode error payloads</li>
+            <li>Deterministic policy engine — 7 checks</li>
+            <li>Execution via real Razorpay test API (payment links, subscription create/cancel) wherever an endpoint exists</li>
+            <li>Simulator, clearly labelled, only where test infra has no endpoint (arbitrary mandate-state injection)</li>
+            <li>Post-action verification against re-fetched state</li>
+            <li>Full audit trail, exportable</li>
+            <li>Metrics report computed from the audit log</li>
+          </ul>
+        </div>
+        <div>
+          <div class="col-head cut">Out of scope</div>
+          <ul class="clean">
+            <li>Production UPI/eNACH integration — AFA authentication is simulated, not real</li>
+            <li>WhatsApp / voice recovery channels</li>
+            <li>Custom ML model — diagnosis uses the Claude API, not a trained classifier</li>
+            <li>Multi-agent orchestration — one agent, five tools, one policy engine</li>
+            <li>Causal/counterfactual uplift measurement — any control-group comparison is labelled synthetic, not real merchant data</li>
+            <li>More than 3 recovery strategies in the working demo path</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- 10 STACK -->
+    <section id="stack">
+      <div class="sec-head"><span class="sec-num">10</span><h2>Tech stack</h2></div>
+      <p class="sec-dek">Boring on purpose. Every entry below is a tool already fluent to build with — nothing here is being learned under deadline, and nothing exists just to look impressive on a slide.</p>
+
+      <table class="decision-table">
+        <tr><th>Layer</th><th>Technology</th><th>Why</th></tr>
+        <tr><td>Frontend</td><td><code>React + TypeScript</code></td><td>Fast to build a dashboard in, typed end to end</td></tr>
+        <tr><td>Styling</td><td><code>Tailwind CSS</code></td><td>No time lost to a design system</td></tr>
+        <tr><td>Charts</td><td><code>Recharts</code></td><td>2–3 metrics charts, not a BI suite</td></tr>
+        <tr><td>Backend</td><td><code>Spring Boot · Java 21</code></td><td>Strongest existing fit — clean service separation for diagnosis / policy / execution</td></tr>
+        <tr><td>Database</td><td><code>PostgreSQL + Spring Data JPA</code></td><td>Financial state is relational: customers → subscriptions → recovery cases → audit events</td></tr>
+        <tr><td>Diagnosis</td><td><code>Claude API</code></td><td>Structured JSON output only — failure type, strategy, confidence, reasoning</td></tr>
+        <tr><td>Payments</td><td><code>Razorpay test-mode API</code></td><td>Subscriptions, Payment Links, Tokens — real calls wherever an endpoint exists</td></tr>
+        <tr><td>Mandate gaps</td><td>Small deterministic simulator</td><td>Only where test mode has no endpoint for arbitrary mandate-state change — clearly labelled in the UI as simulated</td></tr>
+        <tr><td>Policy engine</td><td>Plain Java, no rules engine</td><td>A five-check <code>evaluate()</code> method is easier to explain to a judge than a Drools ruleset</td></tr>
+        <tr><td>Testing</td><td><code>JUnit 5 + Mockito</code>, Postman/Newman</td><td>Policy engine, diagnosis parsing, verification logic, API contracts</td></tr>
+        <tr><td>Data generation</td><td><code>Python + pandas</code></td><td>Synthetic ground-truth cases and accuracy scoring only — not the backend</td></tr>
+      </table>
+
+      <h3>Backend shape</h3>
+      <pre>com.recoversense
+├── controller     PaymentController · RecoveryController · DashboardController · AuditController
+├── service        DiagnosisService · StrategyService · PolicyService
+│                   RecoveryService · VerificationService · AuditService
+├── integration     RazorpayClient · ClaudeClient · MandateSimulator
+├── model          Payment · RecoveryCase · RecoveryDecision · RecoveryAction · AuditEvent
+└── repository</pre>
+
+      <p class="soft">One Spring Boot application. <code>RazorpayClient</code> is the single place HTTP calls to Razorpay happen — nothing scattered across services. <code>RecoveryService</code> orchestrates diagnosis → strategy → policy → execution → verification → audit in that fixed order, synchronously; the dataset is demo-scale, not production traffic, so blocking calls are the right call, not <code>WebClient</code>/reactive.</p>
+
+      <div class="two-col" style="margin-top:8px;">
+        <div>
+          <div class="col-head build">Using</div>
+          <ul class="clean">
+            <li>Docker Compose — Postgres + backend + frontend, for a reproducible demo (skip if it eats a day; local run for the recording is fine)</li>
+            <li>Springdoc OpenAPI / Swagger — free documentation, reinforces the API/QA story</li>
+          </ul>
+        </div>
+        <div>
+          <div class="col-head cut">Deliberately not using</div>
+          <ul class="clean">
+            <li>LangChain / LangGraph — the workflow is deterministic; plain services are clearer</li>
+            <li>n8n — reads as an automation prototype, not an engineered system</li>
+            <li>Kafka, Redis, Kubernetes — no queue, cache, or orchestration problem exists at this scale</li>
+            <li>Microservices — one Spring Boot app end to end</li>
+            <li>Vector DB / RAG — payment context is structured data, not a retrieval problem</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="callout warn">
+        <b>If Aug 30 arrives and the core isn't done yet,</b> cut in this order: Playwright E2E first (tell the QA story from JUnit + Postman instead), then Swagger, then Docker Compose, then chart polish. Never cut the policy engine, verification engine, audit service, or structured-JSON diagnosis — those four are what the whole pitch rests on.
+      </div>
+    </section>
+
+    <!-- 11 ROADMAP -->
+    <section id="roadmap">
+      <div class="sec-head"><span class="sec-num">11</span><h2>Build plan</h2></div>
+      <p class="sec-dek">Eight days. Nothing on the "must ship" list moves — scope gets cut from the bottom of §09 first.</p>
+
+      <div class="roadmap">
+        <div class="rday">
+          <div class="date">Aug 26</div>
+          <div><div class="focus">Competitive matrix + Razorpay test harness</div><div class="out">Table in §02 finalized · test credentials working · client library for subscriptions, payment links, tokens</div></div>
+        </div>
+        <div class="rday">
+          <div class="date">Aug 27</div>
+          <div><div class="focus">Real test data</div><div class="out">20–30 real Razorpay test subscriptions across active / paused / cancelled states, with triggered decline codes</div></div>
+        </div>
+        <div class="rday">
+          <div class="date">Aug 28</div>
+          <div><div class="focus">Diagnosis + strategy</div><div class="out">LLM classifier against real failure payloads · deterministic router · accuracy measured against ground truth</div></div>
+        </div>
+        <div class="rday">
+          <div class="date">Aug 29</div>
+          <div><div class="focus">Policy engine</div><div class="out">7 checks implemented and tested against edge cases (cancelled sub, exceeded retries, duplicate re-acquisition, already-settled-elsewhere)</div></div>
+        </div>
+        <div class="rday">
+          <div class="date">Aug 30</div>
+          <div><div class="focus">Execution + verification</div><div class="out">Real API calls for retry/link/re-acquire · post-action state diff · audit trail writer</div></div>
+        </div>
+        <div class="rday">
+          <div class="date">Aug 31</div>
+          <div><div class="focus">Metrics + dashboard</div><div class="out">Full run across test data · metrics report · React dashboard wired to the audit log</div></div>
+        </div>
+        <div class="rday">
+          <div class="date">Sep 1</div>
+          <div><div class="focus">README + demo</div><div class="out">Architecture doc, honest "what's real vs. simulated" section, 2-minute walkthrough script</div></div>
+        </div>
+        <div class="rday">
+          <div class="date">Sep 2</div>
+          <div><div class="focus">Buffer + submit</div><div class="out">—</div></div>
+        </div>
+      </div>
+
+      <div class="callout warn">
+        <b>If behind schedule.</b> Cut in this order: dashboard polish → payment-link real integration (mock it) → extra failure types. Never cut: policy engine, verification, audit trail — those three are what the whole pitch rests on.
+      </div>
+    </section>
+
+    <footer>
+      RecoverSense — internal project specification · v0.1 · Aug 26, 2026
+    </footer>
+  </main>
+</div>
+
+<script>
+  const links = document.querySelectorAll('.toc a');
+  const targets = Array.from(links).map(l => document.querySelector(l.getAttribute('href')));
+  const obs = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if(e.isIntersecting){
+        links.forEach(l => l.classList.remove('active'));
+        const idx = targets.indexOf(e.target);
+        if(idx > -1) links[idx].classList.add('active');
+      }
+    });
+  }, { rootMargin: '-20% 0px -70% 0px' });
+  targets.forEach(t => t && obs.observe(t));
+</script>
+
+</body>
+</html>

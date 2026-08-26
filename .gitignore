@@ -1,0 +1,42 @@
+# IDE
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Java / Maven
+target/
+*.class
+
+# Node
+node_modules/
+dist/
+build/
+coverage/
+.vite/
+
+# Test artifacts
+test-results/
+playwright-report/
+playwright/.cache/
+
+# Logs / local data
+*.log
+logs/
+*.db
+*.sqlite
+*.sqlite3
+data/local/
+tmp/
+
+# Generated reports
+reports/generated/
