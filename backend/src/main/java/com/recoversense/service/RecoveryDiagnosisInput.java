@@ -12,6 +12,7 @@ public record RecoveryDiagnosisInput(
         String diagnosisCategory,
         BigDecimal diagnosisConfidence,
         String diagnosisRaw,
-        String strategy
+        String strategy,
+        String actionType
 ) {
 }

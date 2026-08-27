@@ -3,6 +3,7 @@ package com.recoversense.service;
 import com.recoversense.domain.AuditEvent;
 import com.recoversense.domain.Payment;
 import com.recoversense.domain.PaymentStatus;
+import com.recoversense.domain.RecoveryAction;
 import com.recoversense.domain.RecoveryCase;
 import com.recoversense.domain.RecoveryCaseStatus;
 import com.recoversense.domain.RecoveryDecision;
@@ -20,16 +21,19 @@ import java.time.Instant;
 import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 /**
  * Orchestrates the failed-payment recovery lifecycle: Payment -> RecoveryCase
- * -> RecoveryDecision -> policy evaluation -> policy audit result.
+ * -> RecoveryDecision -> policy evaluation -> policy audit result -> (ALLOWED
+ * only) PENDING RecoveryAction creation.
  * <p>
- * Does not create or execute a RecoveryAction, call any external provider,
- * or run an LLM - those are later concerns. Policy evaluation and its audit
- * trail are delegated entirely to {@link RecoveryPolicyService}; the 7
- * checks are never re-implemented here.
+ * Never re-implements policy checks or RecoveryAction creation rules: policy
+ * evaluation and its audit trail are delegated entirely to
+ * {@link RecoveryPolicyService}, and action gating is delegated entirely to
+ * {@link RecoveryActionService}. This class never executes or verifies an
+ * action, and never calls PolicyEngine directly.
  */
 @Service
 public class RecoveryLifecycleService {
@@ -47,18 +51,21 @@ public class RecoveryLifecycleService {
     private final RecoveryDecisionRepository recoveryDecisionRepository;
     private final AuditEventRepository auditEventRepository;
     private final RecoveryPolicyService recoveryPolicyService;
+    private final RecoveryActionService recoveryActionService;
     private final JsonMapper jsonMapper = JsonMapper.builder().build();
 
     public RecoveryLifecycleService(PaymentRepository paymentRepository,
                                      RecoveryCaseRepository recoveryCaseRepository,
                                      RecoveryDecisionRepository recoveryDecisionRepository,
                                      AuditEventRepository auditEventRepository,
-                                     RecoveryPolicyService recoveryPolicyService) {
+                                     RecoveryPolicyService recoveryPolicyService,
+                                     RecoveryActionService recoveryActionService) {
         this.paymentRepository = paymentRepository;
         this.recoveryCaseRepository = recoveryCaseRepository;
         this.recoveryDecisionRepository = recoveryDecisionRepository;
         this.auditEventRepository = auditEventRepository;
         this.recoveryPolicyService = recoveryPolicyService;
+        this.recoveryActionService = recoveryActionService;
     }
 
     @Transactional
@@ -84,7 +91,10 @@ public class RecoveryLifecycleService {
 
         PolicyDecision policyDecision = recoveryPolicyService.evaluate(recoveryCase.getId());
 
-        return new RecoveryLifecycleResult(recoveryCase, decision, policyDecision);
+        Optional<RecoveryAction> action = recoveryActionService.createIfAllowed(
+                decision, diagnosisInput.actionType(), policyDecision);
+
+        return new RecoveryLifecycleResult(recoveryCase, decision, policyDecision, action);
     }
 
     @Transactional
