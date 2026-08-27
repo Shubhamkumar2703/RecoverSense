@@ -18,6 +18,7 @@ import com.recoversense.repository.PaymentRepository;
 import com.recoversense.repository.RecoveryActionRepository;
 import com.recoversense.repository.RecoveryCaseRepository;
 import com.recoversense.repository.RecoveryDecisionRepository;
+import com.recoversense.settlement.SettlementState;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -184,6 +185,76 @@ class RecoveryPolicyServiceTest {
     @Test
     void unknownRecoveryCase_failsClosedWithExplicitError() {
         assertThrows(RecoveryCaseNotFoundException.class, () -> recoveryPolicyService.evaluate(-1L));
+    }
+
+    @Test
+    void settlementStateSettled_blocksViaTheSettlementCheck() {
+        RecoveryCase recoveryCase = seedRecoveryCase("7", new BigDecimal("1000"), "active",
+                CustomerStatus.ACTIVE, STALE_ENOUGH);
+        RecoveryPolicyService serviceWithSettledVerifier = new RecoveryPolicyService(
+                recoveryCaseRepository, recoveryActionRepository, auditEventRepository,
+                externalPaymentId -> SettlementState.SETTLED);
+
+        PolicyDecision decision = serviceWithSettledVerifier.evaluate(recoveryCase.getId());
+
+        assertEquals(PolicyResult.BLOCKED, decision.result());
+        assertFailed(decision, "not_already_settled_elsewhere");
+    }
+
+    /**
+     * Also proves NOT_SETTLED can reach ALLOW without weakening any other
+     * check: this seed is identical in shape to the "all available checks
+     * passing" case above, so a NOT_SETTLED answer is the one thing that
+     * flips the overall result from BLOCKED to ALLOWED.
+     */
+    @Test
+    void settlementStateNotSettled_unlocksAllowWithoutWeakeningOtherChecks() {
+        RecoveryCase recoveryCase = seedRecoveryCase("8", new BigDecimal("1000"), "active",
+                CustomerStatus.ACTIVE, STALE_ENOUGH);
+        RecoveryPolicyService serviceWithNotSettledVerifier = new RecoveryPolicyService(
+                recoveryCaseRepository, recoveryActionRepository, auditEventRepository,
+                externalPaymentId -> SettlementState.NOT_SETTLED);
+
+        PolicyDecision decision = serviceWithNotSettledVerifier.evaluate(recoveryCase.getId());
+
+        assertPassed(decision, "not_already_settled_elsewhere");
+        assertPassed(decision, "retry_limit_not_exceeded");
+        assertPassed(decision, "subscription_state_valid");
+        assertPassed(decision, "customer_active");
+        assertPassed(decision, "no_pending_reacquisition");
+        assertPassed(decision, "amount_within_policy");
+        assertPassed(decision, "webhook_delay_window_respected");
+        assertEquals(PolicyResult.ALLOWED, decision.result());
+    }
+
+    @Test
+    void settlementCheckThrows_failsClosedToUnknownRatherThanCrashing() {
+        RecoveryCase recoveryCase = seedRecoveryCase("9", new BigDecimal("1000"), "active",
+                CustomerStatus.ACTIVE, STALE_ENOUGH);
+        RecoveryPolicyService serviceWithFailingVerifier = new RecoveryPolicyService(
+                recoveryCaseRepository, recoveryActionRepository, auditEventRepository,
+                externalPaymentId -> {
+                    throw new RuntimeException("simulated provider failure");
+                });
+
+        PolicyDecision decision = serviceWithFailingVerifier.evaluate(recoveryCase.getId());
+
+        assertEquals(PolicyResult.BLOCKED, decision.result());
+        assertFailed(decision, "not_already_settled_elsewhere");
+    }
+
+    @Test
+    void auditPayload_neverContainsRawExternalPaymentIdOrProviderData() {
+        RecoveryCase recoveryCase = seedRecoveryCase("10", new BigDecimal("1000"), "active",
+                CustomerStatus.ACTIVE, STALE_ENOUGH);
+        RecoveryPolicyService serviceWithSettledVerifier = new RecoveryPolicyService(
+                recoveryCaseRepository, recoveryActionRepository, auditEventRepository,
+                externalPaymentId -> SettlementState.SETTLED);
+
+        serviceWithSettledVerifier.evaluate(recoveryCase.getId());
+
+        AuditEvent persisted = onlyAuditEventFor(recoveryCase);
+        assertFalse(persisted.getEventPayload().contains(recoveryCase.getPayment().getExternalPaymentId()));
     }
 
     private AuditEvent onlyAuditEventFor(RecoveryCase recoveryCase) {

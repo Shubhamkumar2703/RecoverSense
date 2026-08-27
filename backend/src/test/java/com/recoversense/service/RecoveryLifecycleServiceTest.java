@@ -303,7 +303,10 @@ class RecoveryLifecycleServiceTest {
                                        RecoveryActionRepository recoveryActionRepository,
                                        AuditEventRepository auditEventRepository,
                                        PolicyDecision fixedDecision) {
-            super(recoveryCaseRepository, recoveryActionRepository, auditEventRepository);
+            // evaluate() is fully overridden below and never calls super.evaluate(),
+            // so this SettlementVerifier is never actually invoked.
+            super(recoveryCaseRepository, recoveryActionRepository, auditEventRepository,
+                    externalPaymentId -> com.recoversense.settlement.SettlementState.UNKNOWN);
             this.fixedDecision = fixedDecision;
         }
 
