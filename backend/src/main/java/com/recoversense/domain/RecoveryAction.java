@@ -26,6 +26,13 @@ public class RecoveryAction extends Timestamped {
     @JoinColumn(name = "recovery_decision_id", nullable = false, updatable = false)
     private RecoveryDecision recoveryDecision;
 
+    // Denormalized from recoveryDecision.getRecoveryCase() (see constructor) -
+    // not a new relationship to maintain, just the join a partial unique
+    // index can't express across recovery_decisions. See V3 migration.
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "recovery_case_id", nullable = false, updatable = false)
+    private RecoveryCase recoveryCase;
+
     @Column(name = "action_type", nullable = false, updatable = false)
     private String actionType;
 
@@ -55,6 +62,7 @@ public class RecoveryAction extends Timestamped {
 
     public RecoveryAction(RecoveryDecision recoveryDecision, String actionType, PolicyResult policyResult) {
         this.recoveryDecision = recoveryDecision;
+        this.recoveryCase = recoveryDecision.getRecoveryCase();
         this.actionType = actionType;
         this.policyResult = policyResult;
     }
@@ -65,6 +73,10 @@ public class RecoveryAction extends Timestamped {
 
     public RecoveryDecision getRecoveryDecision() {
         return recoveryDecision;
+    }
+
+    public RecoveryCase getRecoveryCase() {
+        return recoveryCase;
     }
 
     public String getActionType() {

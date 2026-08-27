@@ -42,15 +42,19 @@ public class RecoveryActionService {
      * otherwise - the caller must not treat an empty result as an error, it
      * is the expected outcome of a policy BLOCK.
      * <p>
-     * Idempotency note: recovery_actions has no DB uniqueness constraint on
-     * (recovery_decision_id, action_type) - unlike recovery_cases' partial
-     * unique index, nothing at the schema level prevents two concurrent
-     * calls from both inserting an action for the same decision/type. This
-     * method does a find-before-create check as the strongest available
-     * application-level safeguard, but that check is TOCTOU-vulnerable: a
-     * genuine race between two concurrent calls can still produce two rows.
-     * That is a real, currently-unclosed gap, not silently patched with a
-     * schema change here - see the M1.6 report for the recommendation.
+     * Idempotency note: this method's own find-before-create check is scoped
+     * to (recoveryDecision, actionType) and is TOCTOU-vulnerable on its own -
+     * every processFailedPayment call mints a brand-new RecoveryDecision, so
+     * this check alone never sees a sibling action created by a concurrent
+     * call for the same payment/case. The real cross-call guarantee is the
+     * DB-level uq_recovery_actions_pending_case_action_type partial unique
+     * index (V3): at most one PENDING action per (recovery_case_id,
+     * action_type). A losing concurrent INSERT here throws
+     * DataIntegrityViolationException, which propagates out of this method
+     * (and the caller's whole transaction) uncaught - by design, mirroring
+     * the existing uq_recovery_cases_open_payment precedent: the loser
+     * retries the full operation rather than being silently converted into a
+     * fabricated BLOCKED result.
      */
     @Transactional
     public Optional<RecoveryAction> createIfAllowed(RecoveryDecision decision, String actionType, PolicyDecision policyDecision) {
