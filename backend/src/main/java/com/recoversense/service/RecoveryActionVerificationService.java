@@ -21,6 +21,15 @@ import java.time.Instant;
  * No Razorpay/HTTP client is wired here; the only current
  * {@link RecoveryActionVerifier} throws {@link UnsupportedOperationException},
  * which is surfaced honestly rather than treated as a verification result.
+ * <p>
+ * attemptVerification is annotated with noRollbackFor on that one exception
+ * type: without it, a caller outside any ambient transaction (the real
+ * application path - see RecoveryOrchestrationService) makes this method
+ * the transaction's own owner, and rethrowing after the audit save would
+ * trigger Spring's default rollback-on-RuntimeException behavior, discarding
+ * the very audit event that records the failure - confirmed empirically.
+ * noRollbackFor commits normally (including that audit row) while still
+ * letting the exception propagate to the caller.
  */
 @Service
 public class RecoveryActionVerificationService {
@@ -38,7 +47,7 @@ public class RecoveryActionVerificationService {
         this.recoveryActionVerifier = recoveryActionVerifier;
     }
 
-    @Transactional
+    @Transactional(noRollbackFor = UnsupportedOperationException.class)
     public RecoveryAction attemptVerification(Long recoveryActionId) {
         RecoveryAction action = recoveryActionRepository.findById(recoveryActionId)
                 .orElseThrow(() -> new RecoveryActionNotFoundException(recoveryActionId));

@@ -23,6 +23,15 @@ import java.time.Instant;
  * {@link UnsupportedOperationException}, which this service surfaces
  * honestly (as an "unavailable" audit event, action left untouched) rather
  * than swallowing it into a fabricated result.
+ * <p>
+ * attemptExecution is annotated with noRollbackFor on that one exception
+ * type: without it, a caller outside any ambient transaction (the real
+ * application path - see RecoveryOrchestrationService) makes this method
+ * the transaction's own owner, and rethrowing after the audit save would
+ * trigger Spring's default rollback-on-RuntimeException behavior, discarding
+ * the very audit event that records the failure - confirmed empirically.
+ * noRollbackFor commits normally (including that audit row) while still
+ * letting the exception propagate to the caller.
  */
 @Service
 public class RecoveryActionExecutionService {
@@ -40,7 +49,7 @@ public class RecoveryActionExecutionService {
         this.recoveryActionExecutor = recoveryActionExecutor;
     }
 
-    @Transactional
+    @Transactional(noRollbackFor = UnsupportedOperationException.class)
     public RecoveryAction attemptExecution(Long recoveryActionId) {
         RecoveryAction action = recoveryActionRepository.findById(recoveryActionId)
                 .orElseThrow(() -> new RecoveryActionNotFoundException(recoveryActionId));
