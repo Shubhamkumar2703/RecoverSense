@@ -4,6 +4,7 @@ import com.recoversense.domain.ExecutionStatus;
 import com.recoversense.domain.Payment;
 import com.recoversense.domain.RecoveryAction;
 import com.recoversense.domain.RecoveryDecision;
+import com.recoversense.domain.VerificationStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.List;
@@ -15,4 +16,6 @@ public interface RecoveryActionRepository extends JpaRepository<RecoveryAction, 
     boolean existsByRecoveryDecision_RecoveryCase_PaymentAndExecutionStatus(Payment payment, ExecutionStatus executionStatus);
 
     List<RecoveryAction> findByRecoveryDecisionAndActionType(RecoveryDecision recoveryDecision, String actionType);
+
+    long countByVerificationStatus(VerificationStatus verificationStatus);
 }
