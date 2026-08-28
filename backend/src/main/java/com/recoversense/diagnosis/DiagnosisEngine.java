@@ -11,15 +11,19 @@ import java.util.Locale;
  * current domain (customer status, payment failure reason, subscription
  * status, retry count).
  * <p>
- * Categories and strategies are exactly the ones defined in
- * docs/FAILURE_TAXONOMY.md and docs/STRATEGY_MATRIX.md. "UNKNOWN"/"ESCALATE"
- * is the sole explicit fallback for insufficient evidence - never a guess
- * dressed up as one of the five taxonomy categories.
+ * Categories are exactly the ones defined in docs/FAILURE_TAXONOMY.md.
+ * "UNKNOWN" is the sole explicit fallback for insufficient evidence - never
+ * a guess dressed up as one of the five taxonomy categories.
  * <p>
- * Diagnosis is advisory only: it selects a category and proposed
- * strategy/actionType, nothing more. It never authorizes execution -
- * PolicyEngine remains the sole authority on whether a proposed action is
- * permitted, and this class never calls it.
+ * Diagnosis is advisory only: it selects a category, nothing more. Strategy
+ * selection lives in {@link StrategyRouter}, and neither this class nor its
+ * output ever authorizes execution - PolicyEngine remains the sole authority
+ * on whether a proposed action is permitted.
+ * <p>
+ * This is the deterministic classifier wrapped by {@link
+ * SimulatedDiagnosisProvider} - the local/test stand-in for the real
+ * {@code ClaudeDiagnosisProvider} (see the {@code com.recoversense.claude}
+ * package). It is not used in the default Claude-backed path.
  */
 public final class DiagnosisEngine {
 
@@ -43,8 +47,7 @@ public final class DiagnosisEngine {
             // business state." CustomerStatus.INACTIVE is the only explicit
             // state currently available to distinguish this case; STOP is
             // the chosen default terminal outcome (implementation decision).
-            return new DiagnosisResult("CUSTOMER_CANCELLED", HIGH_CONFIDENCE,
-                    "customer status is INACTIVE", "STOP", "STOP");
+            return new DiagnosisResult("CUSTOMER_CANCELLED", HIGH_CONFIDENCE, "customer status is INACTIVE");
         }
 
         String reason = context.failureReason();
@@ -54,21 +57,18 @@ public final class DiagnosisEngine {
                 && (normalizedReason.contains("revoked") || normalizedReason.contains("invalid"))) {
             return new DiagnosisResult("MANDATE_INVALID", HIGH_CONFIDENCE,
                     "failure reason indicates the mandate is revoked/invalid: reason=" + reason
-                            + ", subscription_status=" + context.subscriptionStatus(),
-                    "REACQUIRE_MANDATE", "REACQUIRE_MANDATE");
+                            + ", subscription_status=" + context.subscriptionStatus());
         }
 
         if (normalizedReason != null && normalizedReason.contains("insufficient") && normalizedReason.contains("fund")) {
             return new DiagnosisResult("INSUFFICIENT_FUNDS", HIGH_CONFIDENCE,
-                    "failure reason indicates insufficient funds: reason=" + reason,
-                    "WAIT_RETRY", "WAIT_RETRY");
+                    "failure reason indicates insufficient funds: reason=" + reason);
         }
 
         if (context.retryCount() >= REPEATED_FAILURE_RETRY_THRESHOLD) {
             return new DiagnosisResult("REPEATED_FAILURE", HIGH_CONFIDENCE,
                     "retry_count=" + context.retryCount() + " has reached the repeated-failure threshold of "
-                            + REPEATED_FAILURE_RETRY_THRESHOLD,
-                    "PAYMENT_LINK", "PAYMENT_LINK");
+                            + REPEATED_FAILURE_RETRY_THRESHOLD);
         }
 
         if (reason != null && !reason.isBlank()) {
@@ -76,15 +76,13 @@ public final class DiagnosisEngine {
             // above - treat as transient rather than guess at a more
             // specific category we have no evidence for.
             return new DiagnosisResult("TEMPORARY_FAILURE", LOW_CONFIDENCE,
-                    "failure reason present but not confidently classified: reason=" + reason,
-                    "WAIT_RETRY", "WAIT_RETRY");
+                    "failure reason present but not confidently classified: reason=" + reason);
         }
 
         // No failure reason, no repeat-failure signal, customer not flagged
         // inactive: insufficient evidence. AI_DIAGNOSIS.md's fallback rule -
         // do not execute automatically, use a safe hold path - maps to
         // ESCALATE, never one of the executable strategies.
-        return new DiagnosisResult("UNKNOWN", UNKNOWN_CONFIDENCE,
-                "insufficient evidence to diagnose the failure", "ESCALATE", "ESCALATE");
+        return new DiagnosisResult("UNKNOWN", UNKNOWN_CONFIDENCE, "insufficient evidence to diagnose the failure");
     }
 }

@@ -3,10 +3,12 @@ package com.recoversense.service;
 import java.math.BigDecimal;
 
 /**
- * Diagnosis/strategy facts needed to open a RecoveryDecision, supplied by the
- * caller. No AI/LLM call happens here - a future diagnosis module produces
- * these same fields; for now the caller (currently tests) provides them
- * directly.
+ * Diagnosis/strategy facts needed to open a RecoveryDecision. Produced by
+ * DiagnosisService: diagnosisCategory/diagnosisConfidence/diagnosisRaw come
+ * from a validated DiagnosisProvider result (Claude or the deterministic
+ * simulated fallback - diagnosisRaw is tagged with which one), while
+ * strategy/actionType are always derived deterministically by
+ * StrategyRouter, never taken from the provider directly.
  */
 public record RecoveryDiagnosisInput(
         String diagnosisCategory,

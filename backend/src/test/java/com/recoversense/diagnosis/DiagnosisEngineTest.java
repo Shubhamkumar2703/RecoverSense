@@ -8,6 +8,10 @@ import java.math.BigDecimal;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+/**
+ * Covers classification only - strategy mapping for the same categories is
+ * covered exhaustively by StrategyRouterTest since M1.15 separated the two.
+ */
 class DiagnosisEngineTest {
 
     private final DiagnosisEngine engine = new DiagnosisEngine();
@@ -18,8 +22,6 @@ class DiagnosisEngineTest {
                 new DiagnosisContext("mandate_revoked", "active", CustomerStatus.ACTIVE, 0));
 
         assertEquals("MANDATE_INVALID", result.diagnosisCategory());
-        assertEquals("REACQUIRE_MANDATE", result.strategy());
-        assertEquals("REACQUIRE_MANDATE", result.actionType());
         assertEquals(DiagnosisEngine.HIGH_CONFIDENCE, result.confidence());
     }
 
@@ -29,8 +31,6 @@ class DiagnosisEngineTest {
                 new DiagnosisContext("insufficient_funds", "active", CustomerStatus.ACTIVE, 0));
 
         assertEquals("INSUFFICIENT_FUNDS", result.diagnosisCategory());
-        assertEquals("WAIT_RETRY", result.strategy());
-        assertEquals("WAIT_RETRY", result.actionType());
         assertEquals(DiagnosisEngine.HIGH_CONFIDENCE, result.confidence());
     }
 
@@ -40,8 +40,6 @@ class DiagnosisEngineTest {
                 new DiagnosisContext("card_declined", "active", CustomerStatus.ACTIVE, 3));
 
         assertEquals("REPEATED_FAILURE", result.diagnosisCategory());
-        assertEquals("PAYMENT_LINK", result.strategy());
-        assertEquals("PAYMENT_LINK", result.actionType());
         assertEquals(DiagnosisEngine.HIGH_CONFIDENCE, result.confidence());
     }
 
@@ -51,8 +49,6 @@ class DiagnosisEngineTest {
                 new DiagnosisContext("card_declined", "active", CustomerStatus.ACTIVE, 1));
 
         assertEquals("TEMPORARY_FAILURE", result.diagnosisCategory());
-        assertEquals("WAIT_RETRY", result.strategy());
-        assertEquals("WAIT_RETRY", result.actionType());
         assertEquals(DiagnosisEngine.LOW_CONFIDENCE, result.confidence());
     }
 
@@ -62,8 +58,6 @@ class DiagnosisEngineTest {
                 new DiagnosisContext("mandate_revoked", "active", CustomerStatus.INACTIVE, 0));
 
         assertEquals("CUSTOMER_CANCELLED", result.diagnosisCategory());
-        assertEquals("STOP", result.strategy());
-        assertEquals("STOP", result.actionType());
         assertEquals(DiagnosisEngine.HIGH_CONFIDENCE, result.confidence());
     }
 
@@ -73,8 +67,6 @@ class DiagnosisEngineTest {
                 new DiagnosisContext(null, "active", CustomerStatus.ACTIVE, 0));
 
         assertEquals("UNKNOWN", result.diagnosisCategory());
-        assertEquals("ESCALATE", result.strategy());
-        assertEquals("ESCALATE", result.actionType());
         assertEquals(DiagnosisEngine.UNKNOWN_CONFIDENCE, result.confidence());
     }
 
@@ -84,15 +76,6 @@ class DiagnosisEngineTest {
                 new DiagnosisContext("   ", "active", CustomerStatus.ACTIVE, 0));
 
         assertEquals("UNKNOWN", result.diagnosisCategory());
-        assertEquals("ESCALATE", result.actionType());
-    }
-
-    @Test
-    void unknownCategory_neverProducesAnExecutableStrategy() {
-        DiagnosisResult result = engine.diagnose(
-                new DiagnosisContext(null, null, CustomerStatus.ACTIVE, 0));
-
-        assertTrue(result.strategy().equals("ESCALATE") || result.strategy().equals("STOP"));
     }
 
     @Test

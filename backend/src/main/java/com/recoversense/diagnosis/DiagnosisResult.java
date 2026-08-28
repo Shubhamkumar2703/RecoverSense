@@ -3,20 +3,19 @@ package com.recoversense.diagnosis;
 import java.math.BigDecimal;
 
 /**
- * Structured diagnosis output. diagnosisCategory and strategy are drawn
- * from the closed taxonomies in docs/FAILURE_TAXONOMY.md and
- * docs/STRATEGY_MATRIX.md - "UNKNOWN"/"ESCALATE" is the one explicit
- * fallback outside those taxonomies, used only when evidence is
- * insufficient (see FAILURE_TAXONOMY.md's "Important" note). actionType is
- * the strategy itself: docs/DECISION_LOGIC.md Stage 2 states "the selected
- * strategy becomes a proposed action" - there is no separate action
- * vocabulary in the specification.
+ * Structured diagnosis output - classification only. diagnosisCategory is
+ * drawn from the closed taxonomy in docs/FAILURE_TAXONOMY.md - "UNKNOWN" is
+ * the one explicit fallback outside that taxonomy, used only when evidence
+ * is insufficient (see FAILURE_TAXONOMY.md's "Important" note).
+ * <p>
+ * Strategy selection is deliberately NOT part of this type - see
+ * {@link StrategyRouter}. Diagnosis and strategy used to be fused here; M1.15
+ * separated them so a real (untrusted) diagnosis provider can never carry an
+ * authoritative strategy/action decision, only a classification.
  */
 public record DiagnosisResult(
         String diagnosisCategory,
         BigDecimal confidence,
-        String reasoning,
-        String strategy,
-        String actionType
+        String reasoning
 ) {
 }
