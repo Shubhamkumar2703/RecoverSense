@@ -89,7 +89,7 @@ public class RecoveryLifecycleService {
                 toJson(new DecisionRecordedPayload(decision.getId(), diagnosisInput.diagnosisCategory(),
                         diagnosisInput.diagnosisConfidence(), diagnosisInput.strategy(), decision.getDecidedAt()))));
 
-        PolicyDecision policyDecision = recoveryPolicyService.evaluate(recoveryCase.getId());
+        PolicyDecision policyDecision = recoveryPolicyService.evaluate(recoveryCase.getId(), diagnosisInput.actionType());
 
         Optional<RecoveryAction> action = recoveryActionService.createIfAllowed(
                 decision, diagnosisInput.actionType(), policyDecision);

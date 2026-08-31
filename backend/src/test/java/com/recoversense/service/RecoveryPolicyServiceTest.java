@@ -96,7 +96,7 @@ class RecoveryPolicyServiceTest {
         RecoveryCase recoveryCase = seedRecoveryCase("1", new BigDecimal("1000"), "active",
                 CustomerStatus.ACTIVE, STALE_ENOUGH);
 
-        PolicyDecision decision = recoveryPolicyService.evaluate(recoveryCase.getId());
+        PolicyDecision decision = recoveryPolicyService.evaluate(recoveryCase.getId(), "PAYMENT_LINK");
 
         assertEquals(PolicyResult.BLOCKED, decision.result());
         assertEquals(1, decision.failedReasons().size());
@@ -114,7 +114,7 @@ class RecoveryPolicyServiceTest {
         RecoveryCase recoveryCase = seedRecoveryCase("2", new BigDecimal("1000"), "active",
                 CustomerStatus.INACTIVE, STALE_ENOUGH);
 
-        PolicyDecision decision = recoveryPolicyService.evaluate(recoveryCase.getId());
+        PolicyDecision decision = recoveryPolicyService.evaluate(recoveryCase.getId(), "PAYMENT_LINK");
 
         assertEquals(PolicyResult.BLOCKED, decision.result());
         assertFailed(decision, "customer_active");
@@ -136,7 +136,7 @@ class RecoveryPolicyServiceTest {
         addAction(recoveryCase, ExecutionStatus.EXECUTED);
         addAction(recoveryCase, ExecutionStatus.EXECUTED);
 
-        PolicyDecision decision = recoveryPolicyService.evaluate(recoveryCase.getId());
+        PolicyDecision decision = recoveryPolicyService.evaluate(recoveryCase.getId(), "RETRY_PAYMENT");
 
         assertPassed(decision, "retry_limit_not_exceeded");
     }
@@ -149,9 +149,33 @@ class RecoveryPolicyServiceTest {
         addAction(recoveryCase, ExecutionStatus.EXECUTED);
         addAction(recoveryCase, ExecutionStatus.EXECUTED);
 
-        PolicyDecision decision = recoveryPolicyService.evaluate(recoveryCase.getId());
+        PolicyDecision decision = recoveryPolicyService.evaluate(recoveryCase.getId(), "RETRY_PAYMENT");
 
         assertFailed(decision, "retry_limit_not_exceeded");
+    }
+
+    /**
+     * M1.17: the core regression proof. Three prior EXECUTED RETRY_PAYMENT
+     * actions reach RETRY_PAYMENT's own retry limit (see the test above), but
+     * must NOT block a PAYMENT_LINK proposal for the same payment/case -
+     * PAYMENT_LINK has never itself been executed, so its own retry_count is
+     * 0. Before the M1.17 fix, retryCount was computed once per payment
+     * regardless of proposed action type, so this exact scenario was always
+     * BLOCKED - see M1.16's report.
+     */
+    @Test
+    void retryLimitReachedForOneActionType_doesNotBlockADifferentActionType() {
+        RecoveryCase recoveryCase = seedRecoveryCase("4b", new BigDecimal("1000"), "active",
+                CustomerStatus.ACTIVE, STALE_ENOUGH);
+        addAction(recoveryCase, ExecutionStatus.EXECUTED);
+        addAction(recoveryCase, ExecutionStatus.EXECUTED);
+        addAction(recoveryCase, ExecutionStatus.EXECUTED);
+
+        PolicyDecision retryDecision = recoveryPolicyService.evaluate(recoveryCase.getId(), "RETRY_PAYMENT");
+        PolicyDecision paymentLinkDecision = recoveryPolicyService.evaluate(recoveryCase.getId(), "PAYMENT_LINK");
+
+        assertFailed(retryDecision, "retry_limit_not_exceeded");
+        assertPassed(paymentLinkDecision, "retry_limit_not_exceeded");
     }
 
     @Test
@@ -160,7 +184,7 @@ class RecoveryPolicyServiceTest {
                 CustomerStatus.ACTIVE, STALE_ENOUGH);
         addAction(recoveryCase, ExecutionStatus.PENDING);
 
-        PolicyDecision decision = recoveryPolicyService.evaluate(recoveryCase.getId());
+        PolicyDecision decision = recoveryPolicyService.evaluate(recoveryCase.getId(), "RETRY_PAYMENT");
 
         assertFailed(decision, "no_pending_reacquisition");
     }
@@ -170,7 +194,7 @@ class RecoveryPolicyServiceTest {
         RecoveryCase recoveryCase = seedRecoveryCase("6", new BigDecimal("1000"), "active",
                 CustomerStatus.ACTIVE, STALE_ENOUGH);
 
-        recoveryPolicyService.evaluate(recoveryCase.getId());
+        recoveryPolicyService.evaluate(recoveryCase.getId(), "PAYMENT_LINK");
 
         AuditEvent persisted = onlyAuditEventFor(recoveryCase);
         assertEquals("POLICY_EVALUATED", persisted.getEventType());
@@ -184,7 +208,7 @@ class RecoveryPolicyServiceTest {
 
     @Test
     void unknownRecoveryCase_failsClosedWithExplicitError() {
-        assertThrows(RecoveryCaseNotFoundException.class, () -> recoveryPolicyService.evaluate(-1L));
+        assertThrows(RecoveryCaseNotFoundException.class, () -> recoveryPolicyService.evaluate(-1L, "PAYMENT_LINK"));
     }
 
     @Test
@@ -195,7 +219,7 @@ class RecoveryPolicyServiceTest {
                 recoveryCaseRepository, recoveryActionRepository, auditEventRepository,
                 externalPaymentId -> SettlementState.SETTLED);
 
-        PolicyDecision decision = serviceWithSettledVerifier.evaluate(recoveryCase.getId());
+        PolicyDecision decision = serviceWithSettledVerifier.evaluate(recoveryCase.getId(), "PAYMENT_LINK");
 
         assertEquals(PolicyResult.BLOCKED, decision.result());
         assertFailed(decision, "not_already_settled_elsewhere");
@@ -215,7 +239,7 @@ class RecoveryPolicyServiceTest {
                 recoveryCaseRepository, recoveryActionRepository, auditEventRepository,
                 externalPaymentId -> SettlementState.NOT_SETTLED);
 
-        PolicyDecision decision = serviceWithNotSettledVerifier.evaluate(recoveryCase.getId());
+        PolicyDecision decision = serviceWithNotSettledVerifier.evaluate(recoveryCase.getId(), "PAYMENT_LINK");
 
         assertPassed(decision, "not_already_settled_elsewhere");
         assertPassed(decision, "retry_limit_not_exceeded");
@@ -237,7 +261,7 @@ class RecoveryPolicyServiceTest {
                     throw new RuntimeException("simulated provider failure");
                 });
 
-        PolicyDecision decision = serviceWithFailingVerifier.evaluate(recoveryCase.getId());
+        PolicyDecision decision = serviceWithFailingVerifier.evaluate(recoveryCase.getId(), "PAYMENT_LINK");
 
         assertEquals(PolicyResult.BLOCKED, decision.result());
         assertFailed(decision, "not_already_settled_elsewhere");
@@ -251,7 +275,7 @@ class RecoveryPolicyServiceTest {
                 recoveryCaseRepository, recoveryActionRepository, auditEventRepository,
                 externalPaymentId -> SettlementState.SETTLED);
 
-        serviceWithSettledVerifier.evaluate(recoveryCase.getId());
+        serviceWithSettledVerifier.evaluate(recoveryCase.getId(), "PAYMENT_LINK");
 
         AuditEvent persisted = onlyAuditEventFor(recoveryCase);
         assertFalse(persisted.getEventPayload().contains(recoveryCase.getPayment().getExternalPaymentId()));

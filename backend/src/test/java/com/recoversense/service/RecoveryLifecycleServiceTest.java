@@ -311,7 +311,7 @@ class RecoveryLifecycleServiceTest {
         }
 
         @Override
-        public PolicyDecision evaluate(Long recoveryCaseId) {
+        public PolicyDecision evaluate(Long recoveryCaseId, String proposedActionType) {
             return fixedDecision;
         }
     }

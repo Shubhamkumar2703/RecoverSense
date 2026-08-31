@@ -136,7 +136,7 @@ class RecoveryActionConcurrentPendingCreationTest {
             TransactionTemplate transactionTemplate = new TransactionTemplate(transactionManager);
             try {
                 return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
-                    PolicyDecision policyDecision = policyService.evaluate(caseId);
+                    PolicyDecision policyDecision = policyService.evaluate(caseId, "REACQUIRE_MANDATE");
                     awaitBoth(bothCheckedPending);
                     return recoveryActionService.createIfAllowed(decision, "REACQUIRE_MANDATE", policyDecision).isPresent();
                 }));

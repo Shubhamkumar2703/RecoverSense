@@ -28,6 +28,19 @@ import java.util.List;
  * for the 7 checks - and never calls Razorpay, an LLM, or an execution
  * service directly; external settlement state is obtained only through the
  * SettlementVerifier abstraction, never a concrete HTTP client.
+ * <p>
+ * M1.17: retryCount (P01's input) is scoped to the specific proposedActionType
+ * being evaluated, not every recovery attempt regardless of type. Before this,
+ * P01 and DiagnosisEngine's own (still unscoped, unchanged) retry_count read
+ * the exact same "executed actions of any type" number for two different
+ * purposes - DiagnosisEngine's escalates strategy to PAYMENT_LINK once total
+ * attempts reach 3, while P01 rejected once that same number reached 3 -
+ * which meant a freshly escalated PAYMENT_LINK action, having never itself
+ * been executed, was blocked by a limit meant for the mechanism it was
+ * escalating away from. Scoping P01's count to proposedActionType fixes this:
+ * a strategy that has never been tried starts at 0 regardless of how many
+ * times a *different* strategy was tried first, while still capping repeated
+ * attempts of any single action type (including PAYMENT_LINK itself).
  */
 @Service
 public class RecoveryPolicyService {
@@ -52,14 +65,15 @@ public class RecoveryPolicyService {
     }
 
     @Transactional
-    public PolicyDecision evaluate(Long recoveryCaseId) {
+    public PolicyDecision evaluate(Long recoveryCaseId, String proposedActionType) {
         RecoveryCase recoveryCase = recoveryCaseRepository.findById(recoveryCaseId)
                 .orElseThrow(() -> new RecoveryCaseNotFoundException(recoveryCaseId));
         Payment payment = recoveryCase.getPayment();
         Customer customer = payment.getCustomer();
 
         int retryCount = (int) recoveryActionRepository
-                .countByRecoveryDecision_RecoveryCase_PaymentAndExecutionStatus(payment, ExecutionStatus.EXECUTED);
+                .countByRecoveryDecision_RecoveryCase_PaymentAndExecutionStatusAndActionType(
+                        payment, ExecutionStatus.EXECUTED, proposedActionType);
 
         boolean pendingReacquisitionExists = recoveryActionRepository
                 .existsByRecoveryDecision_RecoveryCase_PaymentAndExecutionStatus(payment, ExecutionStatus.PENDING);
