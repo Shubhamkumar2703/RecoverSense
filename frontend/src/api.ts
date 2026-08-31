@@ -14,6 +14,7 @@ export interface StrategyMixEntry {
 
 export interface RecentCaseSummary {
   recoveryCaseId: number;
+  paymentId: number;
   externalPaymentId: string;
   amount: number;
   currency: string;
@@ -54,6 +55,19 @@ export interface RecoveryResponse {
   outcome: string;
 }
 
+// Carries the HTTP status alongside the message so callers can distinguish
+// "payment not found" (404) from "not in a recoverable state" (409) from an
+// unexpected failure, without re-parsing the response body themselves.
+export class RecoveryApiError extends Error {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = 'RecoveryApiError';
+    this.status = status;
+  }
+}
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8081';
 
 async function getJson<T>(path: string): Promise<T> {
@@ -72,17 +86,20 @@ export function fetchAuditTrail(recoveryCaseId: number): Promise<AuditEventSumma
   return getJson<AuditEventSummary[]>(`/api/dashboard/cases/${recoveryCaseId}/audit`);
 }
 
-// Not yet wired into the UI (M1.20 is API-only, no UI changes) - available
-// for the next UI milestone to call. RecoveryController returns 200 for
-// every completed pipeline outcome (RECOVERED/BLOCKED/EXECUTION_FAILED/
-// VERIFICATION_FAILED - see its `outcome` field), so only a genuine guard
-// rejection (404/409) or an unavailable provider (503) throws here - never
-// collapse a completed-but-unfavorable outcome into an error.
+// RecoveryController returns 200 for every completed pipeline outcome
+// (RECOVERED/BLOCKED/EXECUTION_FAILED/VERIFICATION_FAILED) and 503 for
+// EXECUTION_UNAVAILABLE/VERIFICATION_UNAVAILABLE - both still carry a full
+// RecoveryResponse body (never an ErrorResponse), so 503 resolves normally
+// here too: the caller renders it through the same outcome mapping as any
+// other outcome instead of losing that information to a generic error.
+// Only a genuine guard rejection (404/409) or a truly unexpected failure
+// throws - those responses carry an ErrorResponse{message}, not a
+// RecoveryResponse.
 export async function recoverPayment(paymentId: number): Promise<RecoveryResponse> {
   const response = await fetch(`${API_BASE_URL}/api/recovery/payments/${paymentId}/recover`, { method: 'POST' });
-  if (!response.ok) {
+  if (!response.ok && response.status !== 503) {
     const body = (await response.json().catch(() => null)) as { message?: string } | null;
-    throw new Error(body?.message ?? `recover failed with status ${response.status}`);
+    throw new RecoveryApiError(response.status, body?.message ?? `recover failed with status ${response.status}`);
   }
   return response.json() as Promise<RecoveryResponse>;
 }

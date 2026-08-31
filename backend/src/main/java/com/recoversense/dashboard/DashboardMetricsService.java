@@ -111,6 +111,7 @@ public class DashboardMetricsService {
 
         return new RecentCaseSummary(
                 recoveryCase.getId(),
+                payment.getId(),
                 payment.getExternalPaymentId(),
                 payment.getAmount(),
                 payment.getCurrency(),

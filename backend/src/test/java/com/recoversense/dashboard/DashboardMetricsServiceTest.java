@@ -153,6 +153,7 @@ class DashboardMetricsServiceTest {
         assertEquals(0, dashboard.summary().policyBlocks());
 
         RecentCaseSummary row = onlyRow(dashboard, "pay_recovered");
+        assertEquals(payment.getId(), row.paymentId());
         assertEquals("ALLOWED", row.policyResult());
         assertEquals(ExecutionStatus.EXECUTED.name(), row.executionStatus());
         assertEquals(VerificationStatus.VERIFIED.name(), row.verificationStatus());

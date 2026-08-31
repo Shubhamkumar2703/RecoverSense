@@ -13,6 +13,7 @@ import java.time.Instant;
  */
 public record RecentCaseSummary(
         Long recoveryCaseId,
+        Long paymentId,
         String externalPaymentId,
         BigDecimal amount,
         String currency,

@@ -1,11 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import './App.css';
 import {
   fetchAuditTrail,
   fetchDashboard,
+  recoverPayment,
+  RecoveryApiError,
   type AuditEventSummary,
   type DashboardResponse,
   type RecentCaseSummary,
+  type RecoveryResponse,
 } from './api';
 
 const STRATEGY_LABELS: Record<string, string> = {
@@ -58,6 +61,81 @@ const CASE_STATUS_TONES: Partial<Record<string, PillTone>> = {
   CLOSED: 'neutral',
   FAILED: 'critical',
 };
+
+// Plain-language outcome text. RECOVERED's headline is the only one that
+// says "Recovered" - every other outcome describes what actually happened
+// instead, so a reader never mistakes "executed" for "verified" or
+// "verified" for "recovered".
+const OUTCOME_INFO: Record<string, { headline: string; tone: PillTone }> = {
+  RECOVERED: { headline: 'Recovered successfully', tone: 'good' },
+  BLOCKED: { headline: 'Recovery blocked by policy', tone: 'neutral' },
+  EXECUTION_FAILED: { headline: 'Recovery action could not be executed', tone: 'critical' },
+  VERIFICATION_FAILED: { headline: 'Action executed, but recovery was not verified', tone: 'warn' },
+  EXECUTION_UNAVAILABLE: { headline: 'Recovery provider is currently unavailable', tone: 'warn' },
+  VERIFICATION_UNAVAILABLE: { headline: 'Recovery could not be verified right now', tone: 'warn' },
+};
+
+function RecoveryResultCard({
+  result,
+  errorMessage,
+  onDismiss,
+}: {
+  result: RecoveryResponse | null;
+  errorMessage: string | null;
+  onDismiss: () => void;
+}) {
+  if (!result && !errorMessage) return null;
+  const outcome = result ? OUTCOME_INFO[result.outcome] : null;
+
+  return (
+    <div className="card recovery-result">
+      <div className="card-header">
+        <div className="card-title">Recovery result</div>
+        <button type="button" className="dismiss-btn" onClick={onDismiss} aria-label="Dismiss">
+          ×
+        </button>
+      </div>
+      {errorMessage ? (
+        <div className="error-banner">{errorMessage}</div>
+      ) : result ? (
+        <>
+          <div className="outcome-headline">
+            <span className={`pill ${outcome?.tone ?? 'neutral'}`}>{result.outcome}</span>
+            <span>{outcome?.headline ?? result.outcome}</span>
+          </div>
+          <div className="decision-row">
+            <span>Diagnosis</span>
+            <b>{result.diagnosisCategory ?? '—'}</b>
+          </div>
+          <div className="decision-row">
+            <span>Strategy</span>
+            <b>{strategyLabel(result.strategy)}</b>
+          </div>
+          <div className="decision-row">
+            <span>Policy</span>
+            <Pill value={result.policyResult} tones={POLICY_TONES} />
+          </div>
+          <div className="decision-row">
+            <span>Execution</span>
+            <Pill value={result.executionStatus} tones={EXECUTION_TONES} />
+          </div>
+          <div className="decision-row">
+            <span>Verification</span>
+            <Pill value={result.verificationStatus} tones={VERIFICATION_TONES} />
+          </div>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+function recoveryErrorMessage(error: unknown): string {
+  if (error instanceof RecoveryApiError) {
+    if (error.status === 404) return 'Payment not found.';
+    if (error.status === 409) return 'This payment cannot be recovered in its current state.';
+  }
+  return 'Something went wrong while starting recovery. Please try again.';
+}
 
 function DecisionPanel({ recoveryCase }: { recoveryCase: RecentCaseSummary }) {
   const confidence =
@@ -117,28 +195,61 @@ export default function App() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [selectedCaseId, setSelectedCaseId] = useState<number | null>(null);
   const [auditEvents, setAuditEvents] = useState<AuditEventSummary[]>([]);
+  const [recoveringPaymentId, setRecoveringPaymentId] = useState<number | null>(null);
+  const [recoveryResult, setRecoveryResult] = useState<RecoveryResponse | null>(null);
+  const [recoveryErrorText, setRecoveryErrorText] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetchDashboard()
+  const loadDashboard = useCallback(() => {
+    return fetchDashboard()
       .then((data) => {
         setDashboard(data);
         setLoadError(null);
-        if (data.recentCases.length > 0) {
-          setSelectedCaseId(data.recentCases[0].recoveryCaseId);
-        }
+        return data;
       })
-      .catch((error: Error) => setLoadError(error.message));
+      .catch((error: Error) => {
+        setLoadError(error.message);
+        return null;
+      });
   }, []);
+
+  const loadAuditTrail = useCallback((caseId: number) => {
+    fetchAuditTrail(caseId)
+      .then(setAuditEvents)
+      .catch(() => setAuditEvents([]));
+  }, []);
+
+  useEffect(() => {
+    loadDashboard().then((data) => {
+      if (data && data.recentCases.length > 0) {
+        setSelectedCaseId(data.recentCases[0].recoveryCaseId);
+      }
+    });
+  }, [loadDashboard]);
 
   useEffect(() => {
     if (selectedCaseId === null) {
       setAuditEvents([]);
       return;
     }
-    fetchAuditTrail(selectedCaseId)
-      .then(setAuditEvents)
-      .catch(() => setAuditEvents([]));
-  }, [selectedCaseId]);
+    loadAuditTrail(selectedCaseId);
+  }, [selectedCaseId, loadAuditTrail]);
+
+  async function handleRecover(paymentId: number) {
+    setRecoveringPaymentId(paymentId);
+    setRecoveryErrorText(null);
+    setRecoveryResult(null);
+    try {
+      const result = await recoverPayment(paymentId);
+      setRecoveryResult(result);
+      await loadDashboard();
+      setSelectedCaseId(result.recoveryCaseId);
+      loadAuditTrail(result.recoveryCaseId);
+    } catch (error) {
+      setRecoveryErrorText(recoveryErrorMessage(error));
+    } finally {
+      setRecoveringPaymentId(null);
+    }
+  }
 
   const selectedCase = dashboard?.recentCases.find((c) => c.recoveryCaseId === selectedCaseId) ?? null;
 
@@ -181,6 +292,15 @@ export default function App() {
         </div>
 
         {loadError && <div className="error-banner">Could not load dashboard data: {loadError}</div>}
+
+        <RecoveryResultCard
+          result={recoveryResult}
+          errorMessage={recoveryErrorText}
+          onDismiss={() => {
+            setRecoveryResult(null);
+            setRecoveryErrorText(null);
+          }}
+        />
 
         {!dashboard ? (
           !loadError && <div className="empty-state">Loading…</div>
@@ -265,6 +385,7 @@ export default function App() {
                         <th>Execution</th>
                         <th>Verification</th>
                         <th>Case</th>
+                        <th>Actions</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -291,6 +412,19 @@ export default function App() {
                           </td>
                           <td>
                             <Pill value={row.caseStatus} tones={CASE_STATUS_TONES} />
+                          </td>
+                          <td>
+                            <button
+                              type="button"
+                              className="recover-btn"
+                              disabled={recoveringPaymentId !== null}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                handleRecover(row.paymentId);
+                              }}
+                            >
+                              {recoveringPaymentId === row.paymentId ? 'Recovering…' : 'Recover'}
+                            </button>
                           </td>
                         </tr>
                       ))}
