@@ -32,4 +32,9 @@ public class DashboardController {
     public List<AuditEventSummary> auditTrail(@PathVariable Long recoveryCaseId) {
         return dashboardMetricsService.auditTrailFor(recoveryCaseId);
     }
+
+    @GetMapping("/payments/at-risk")
+    public List<AtRiskPaymentSummary> atRiskPayments() {
+        return dashboardMetricsService.atRiskPayments();
+    }
 }

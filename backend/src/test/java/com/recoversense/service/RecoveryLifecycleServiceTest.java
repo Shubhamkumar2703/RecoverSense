@@ -208,6 +208,46 @@ class RecoveryLifecycleServiceTest {
     }
 
     /**
+     * M1.22 Part 2.C: a payment with a RECOVERED RecoveryCase must be
+     * rejected before any new case/decision/action is created - proves the
+     * guard fires ahead of findOrCreateOpenCase, not as a side effect of
+     * something downstream.
+     */
+    @Test
+    void paymentWithRecoveredCase_isRejected_createsNothingNew() {
+        Payment payment = seedFailedPayment("13");
+        RecoveryCase recoveredCase = recoveryCaseRepository.save(new RecoveryCase(payment));
+        recoveryLifecycleService.transitionCase(recoveredCase.getId(), RecoveryCaseStatus.RECOVERED);
+        long casesBefore = recoveryCaseRepository.count();
+        long decisionsBefore = recoveryDecisionRepository.count();
+        long actionsBefore = recoveryActionRepository.count();
+
+        assertThrows(PaymentAlreadyRecoveredException.class,
+                () -> recoveryLifecycleService.processFailedPayment(payment.getId(), diagnosisInput()));
+
+        assertEquals(casesBefore, recoveryCaseRepository.count());
+        assertEquals(decisionsBefore, recoveryDecisionRepository.count());
+        assertEquals(actionsBefore, recoveryActionRepository.count());
+    }
+
+    /**
+     * M1.22 Part 2.A/B: the guard must not affect the two behaviors it
+     * doesn't apply to - a payment with no case at all, and a payment whose
+     * only case is still OPEN (not RECOVERED).
+     */
+    @Test
+    void paymentWithNoCase_and_paymentWithOpenCase_remainUnaffectedByTheRecoveredGuard() {
+        Payment noCasePayment = seedFailedPayment("14a");
+        RecoveryLifecycleResult noCaseResult = recoveryLifecycleService.processFailedPayment(noCasePayment.getId(), diagnosisInput());
+        assertEquals(RecoveryCaseStatus.OPEN, noCaseResult.recoveryCase().getStatus());
+
+        Payment openCasePayment = seedFailedPayment("14b");
+        recoveryCaseRepository.save(new RecoveryCase(openCasePayment));
+        RecoveryLifecycleResult openCaseResult = recoveryLifecycleService.processFailedPayment(openCasePayment.getId(), diagnosisInput());
+        assertEquals(RecoveryCaseStatus.OPEN, openCaseResult.recoveryCase().getStatus());
+    }
+
+    /**
      * ALLOW path. RecoveryPolicyService always passes alreadySettledElsewhere=null
      * (unknown), so the real production flow can never return ALLOWED - that is
      * the correct, intended fail-closed behavior (see M1.4) and is not weakened

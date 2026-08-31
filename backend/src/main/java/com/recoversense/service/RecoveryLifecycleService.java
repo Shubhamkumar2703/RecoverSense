@@ -34,6 +34,14 @@ import java.util.Set;
  * {@link RecoveryPolicyService}, and action gating is delegated entirely to
  * {@link RecoveryActionService}. This class never executes or verifies an
  * action, and never calls PolicyEngine directly.
+ * <p>
+ * M1.22: processFailedPayment explicitly rejects re-recovery once this
+ * payment already has a RECOVERED RecoveryCase - checked before any new
+ * case/decision/action is created, so a duplicate provider mutation can
+ * never be reached. Payment.status intentionally stays FAILED after a
+ * successful recovery (see docs/DECISIONS.md ADR-012), so this guard - not
+ * the existing FAILED-only check above it - is what a RECOVERED payment is
+ * actually caught by.
  */
 @Service
 public class RecoveryLifecycleService {
@@ -74,6 +82,9 @@ public class RecoveryLifecycleService {
                 .orElseThrow(() -> new PaymentNotFoundException(paymentId));
         if (payment.getStatus() != PaymentStatus.FAILED) {
             throw new InvalidPaymentStateException(paymentId, payment.getStatus());
+        }
+        if (recoveryCaseRepository.existsByPaymentAndStatus(payment, RecoveryCaseStatus.RECOVERED)) {
+            throw new PaymentAlreadyRecoveredException(paymentId);
         }
 
         RecoveryCase recoveryCase = findOrCreateOpenCase(payment);

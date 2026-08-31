@@ -54,3 +54,12 @@ Host port 8080 is already occupied by a native `httpd.exe` service. We do not st
 **Status:** Accepted
 
 The local JVM resolved the default timezone as the deprecated alias `Asia/Calcutta`, which PostgreSQL 17 rejects during the JDBC session `SET TimeZone`, breaking Flyway migrations. Fixed via `-Duser.timezone=Asia/Kolkata` in `backend/pom.xml` for both `maven-surefire-plugin` and `spring-boot-maven-plugin`.
+
+## ADR-012 — Payment.status remains FAILED after successful recovery
+**Status:** Accepted
+
+`Payment.status` describes the original payment attempt; `RecoveryCase.status` describes the independent RecoverSense recovery lifecycle. A successfully recovered payment can therefore legitimately show `Payment.status = FAILED` alongside `RecoveryCase.status = RECOVERED`, `RecoveryAction.executionStatus = EXECUTED`, and `RecoveryAction.verificationStatus = VERIFIED` - this is intentional, not a bug. `Payment.status` is never rewritten to `SUCCEEDED` or any other value by the recovery pipeline.
+
+Consequently, `RecoveryCase.status = RECOVERED` is the sole authoritative signal that recovery has completed for a payment. `RecoveryLifecycleService.processFailedPayment` explicitly rejects (`PaymentAlreadyRecoveredException`, surfaced as HTTP 409) starting a new recovery for a payment that already has a RECOVERED case, checked before any new `RecoveryCase`/`RecoveryDecision`/`RecoveryAction` is created and before any provider call.
+
+At-risk payment definition (M1.22, `GET /api/dashboard/payments/at-risk`): `Payment.status == FAILED` AND no `RecoveryCase` exists for that payment with status `OPEN` or `RECOVERED`. A payment already recovered is excluded from "at risk" by this case-status check, not by `Payment.status`, which never changes.

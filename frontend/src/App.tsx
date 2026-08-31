@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import './App.css';
 import {
+  fetchAtRiskPayments,
   fetchAuditTrail,
   fetchDashboard,
   recoverPayment,
   RecoveryApiError,
+  type AtRiskPaymentSummary,
   type AuditEventSummary,
   type DashboardResponse,
   type RecentCaseSummary,
@@ -190,6 +192,70 @@ function AuditPanel({ recoveryCase, events }: { recoveryCase: RecentCaseSummary 
   );
 }
 
+function formatDate(iso: string): string {
+  return new Date(iso).toLocaleString('en-IN', { hour12: false });
+}
+
+function AtRiskTable({
+  payments,
+  recoveringPaymentId,
+  onRecover,
+}: {
+  payments: AtRiskPaymentSummary[];
+  recoveringPaymentId: number | null;
+  onRecover: (paymentId: number) => void;
+}) {
+  return (
+    <section className="card table-card">
+      <div className="table-head">
+        <div className="card-title">At-risk payments</div>
+        <div className="muted">Showing {payments.length}</div>
+      </div>
+      {payments.length === 0 ? (
+        <div className="empty-state">No failed payments are currently at risk - every failed payment already has an open or recovered case.</div>
+      ) : (
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Payment</th>
+                <th>Amount</th>
+                <th>Failure</th>
+                <th>Failed at</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {payments.map((row) => (
+                <tr key={row.paymentId}>
+                  <td>
+                    <b>{row.externalPaymentId}</b>
+                  </td>
+                  <td>{formatCurrency(row.amount, row.currency)}</td>
+                  <td>{row.failureReason ?? '—'}</td>
+                  <td>{formatDate(row.failedAt)}</td>
+                  <td>
+                    <button
+                      type="button"
+                      className="recover-btn"
+                      disabled={recoveringPaymentId !== null}
+                      onClick={() => onRecover(row.paymentId)}
+                    >
+                      {recoveringPaymentId === row.paymentId ? 'Recovering…' : 'Recover'}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
+type WorkspaceView = 'overview' | 'at-risk';
+
 export default function App() {
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -198,6 +264,14 @@ export default function App() {
   const [recoveringPaymentId, setRecoveringPaymentId] = useState<number | null>(null);
   const [recoveryResult, setRecoveryResult] = useState<RecoveryResponse | null>(null);
   const [recoveryErrorText, setRecoveryErrorText] = useState<string | null>(null);
+  const [activeView, setActiveView] = useState<WorkspaceView>('overview');
+  const [atRiskPayments, setAtRiskPayments] = useState<AtRiskPaymentSummary[]>([]);
+
+  const loadAtRiskPayments = useCallback(() => {
+    return fetchAtRiskPayments()
+      .then(setAtRiskPayments)
+      .catch(() => setAtRiskPayments([]));
+  }, []);
 
   const loadDashboard = useCallback(() => {
     return fetchDashboard()
@@ -224,7 +298,8 @@ export default function App() {
         setSelectedCaseId(data.recentCases[0].recoveryCaseId);
       }
     });
-  }, [loadDashboard]);
+    loadAtRiskPayments();
+  }, [loadDashboard, loadAtRiskPayments]);
 
   useEffect(() => {
     if (selectedCaseId === null) {
@@ -242,6 +317,7 @@ export default function App() {
       const result = await recoverPayment(paymentId);
       setRecoveryResult(result);
       await loadDashboard();
+      await loadAtRiskPayments();
       setSelectedCaseId(result.recoveryCaseId);
       loadAuditTrail(result.recoveryCaseId);
     } catch (error) {
@@ -263,10 +339,26 @@ export default function App() {
 
         <div className="nav-title">Workspace</div>
         <div className="nav">
-          <a className="active" href="#">
+          <a
+            className={activeView === 'overview' ? 'active' : ''}
+            href="#"
+            onClick={(event) => {
+              event.preventDefault();
+              setActiveView('overview');
+            }}
+          >
             Overview
           </a>
-          <span className="disabled">At-risk payments</span>
+          <a
+            className={activeView === 'at-risk' ? 'active' : ''}
+            href="#"
+            onClick={(event) => {
+              event.preventDefault();
+              setActiveView('at-risk');
+            }}
+          >
+            At-risk payments
+          </a>
           <span className="disabled">Recovery cases</span>
           <span className="disabled">Audit trail</span>
           <span className="disabled">Metrics</span>
@@ -287,8 +379,12 @@ export default function App() {
 
       <main>
         <div className="topbar">
-          <h1>Recovery Overview</h1>
-          <div className="sub">Live view of revenue at risk and recovery decisions</div>
+          <h1>{activeView === 'at-risk' ? 'At-Risk Payments' : 'Recovery Overview'}</h1>
+          <div className="sub">
+            {activeView === 'at-risk'
+              ? 'Failed payments RecoverSense has not yet recovered - start recovery from here'
+              : 'Live view of revenue at risk and recovery decisions'}
+          </div>
         </div>
 
         {loadError && <div className="error-banner">Could not load dashboard data: {loadError}</div>}
@@ -302,7 +398,9 @@ export default function App() {
           }}
         />
 
-        {!dashboard ? (
+        {activeView === 'at-risk' ? (
+          <AtRiskTable payments={atRiskPayments} recoveringPaymentId={recoveringPaymentId} onRecover={handleRecover} />
+        ) : !dashboard ? (
           !loadError && <div className="empty-state">Loading…</div>
         ) : (
           <>

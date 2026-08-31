@@ -4,9 +4,14 @@ import com.recoversense.domain.Customer;
 import com.recoversense.domain.CustomerStatus;
 import com.recoversense.domain.Payment;
 import com.recoversense.domain.PaymentStatus;
+import com.recoversense.domain.RecoveryCase;
+import com.recoversense.domain.RecoveryCaseStatus;
 import com.recoversense.repository.CustomerRepository;
 import com.recoversense.repository.PaymentRepository;
 import com.recoversense.repository.RecoveryActionRepository;
+import com.recoversense.repository.RecoveryCaseRepository;
+import com.recoversense.repository.RecoveryDecisionRepository;
+import com.recoversense.service.RecoveryLifecycleService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -47,6 +52,12 @@ class RecoveryControllerTest {
     private PaymentRepository paymentRepository;
     @Autowired
     private RecoveryActionRepository recoveryActionRepository;
+    @Autowired
+    private RecoveryCaseRepository recoveryCaseRepository;
+    @Autowired
+    private RecoveryDecisionRepository recoveryDecisionRepository;
+    @Autowired
+    private RecoveryLifecycleService recoveryLifecycleService;
 
     private static final Instant STALE_ENOUGH = Instant.now().minus(Duration.ofMinutes(10));
 
@@ -103,6 +114,37 @@ class RecoveryControllerTest {
                 .andExpect(jsonPath("$.executionStatus").doesNotExist())
                 .andExpect(jsonPath("$.caseStatus").value("OPEN"));
 
+        org.junit.jupiter.api.Assertions.assertEquals(actionsBefore, recoveryActionRepository.count());
+    }
+
+    /**
+     * M1.22 Part 8: a payment that already has a RECOVERED case must be
+     * rejected through the real HTTP boundary - 409, no raw constraint name,
+     * and no new case/decision/action created (proving the guard, not
+     * something downstream, is what stopped it).
+     */
+    @Test
+    void recoverPaymentWithRecoveredCase_returnsConflict_createsNothingNew() throws Exception {
+        Customer customer = new Customer("cust_api_already_recovered", "user+apialreadyrecovered@example.com");
+        customer.setStatus(CustomerStatus.ACTIVE);
+        customerRepository.save(customer);
+        Payment payment = new Payment("pay_api_already_recovered", customer, new BigDecimal("50.00"), "INR", PaymentStatus.FAILED);
+        payment.setFailureReason("mandate_revoked");
+        payment.setFailedAt(STALE_ENOUGH);
+        paymentRepository.save(payment);
+        RecoveryCase recoveredCase = recoveryCaseRepository.save(new RecoveryCase(payment));
+        recoveryLifecycleService.transitionCase(recoveredCase.getId(), RecoveryCaseStatus.RECOVERED);
+        long casesBefore = recoveryCaseRepository.count();
+        long decisionsBefore = recoveryDecisionRepository.count();
+        long actionsBefore = recoveryActionRepository.count();
+
+        mockMvc.perform(post("/api/recovery/payments/{paymentId}/recover", payment.getId()))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message").value(
+                        "Payment " + payment.getId() + " already has a RECOVERED recovery case; re-recovery is not permitted"));
+
+        org.junit.jupiter.api.Assertions.assertEquals(casesBefore, recoveryCaseRepository.count());
+        org.junit.jupiter.api.Assertions.assertEquals(decisionsBefore, recoveryDecisionRepository.count());
         org.junit.jupiter.api.Assertions.assertEquals(actionsBefore, recoveryActionRepository.count());
     }
 }

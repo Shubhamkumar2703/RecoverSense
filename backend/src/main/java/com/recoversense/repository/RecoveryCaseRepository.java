@@ -15,6 +15,8 @@ public interface RecoveryCaseRepository extends JpaRepository<RecoveryCase, Long
 
     Optional<RecoveryCase> findByPaymentAndStatus(Payment payment, RecoveryCaseStatus status);
 
+    boolean existsByPaymentAndStatus(Payment payment, RecoveryCaseStatus status);
+
     List<RecoveryCase> findTop20ByOrderByOpenedAtDesc();
 
     @Query("select coalesce(sum(rc.payment.amount), 0) from RecoveryCase rc")

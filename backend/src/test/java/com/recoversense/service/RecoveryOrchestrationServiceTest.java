@@ -7,6 +7,7 @@ import com.recoversense.domain.ExecutionStatus;
 import com.recoversense.domain.Payment;
 import com.recoversense.domain.PaymentStatus;
 import com.recoversense.domain.RecoveryAction;
+import com.recoversense.domain.RecoveryCase;
 import com.recoversense.domain.RecoveryCaseStatus;
 import com.recoversense.domain.VerificationStatus;
 import com.recoversense.repository.AuditEventRepository;
@@ -183,5 +184,34 @@ class RecoveryOrchestrationServiceTest {
     void diagnosisFailure_unknownPayment_neverProcessesOrExecutes() {
         assertThrows(PaymentNotFoundException.class, () -> realOrchestrationService.recover(-1L));
         assertEquals(0, recoveryCaseRepository.count());
+    }
+
+    /**
+     * M1.22 Part 2.D: a second recover() call for a payment that already
+     * reached RECOVERED must be rejected before touching the provider -
+     * neverCalledExecutor()/neverCalledVerifier() would fail the test if
+     * either were invoked, proving the guard runs ahead of any provider
+     * mutation, not just ahead of a successful one.
+     */
+    @Test
+    void secondRecoverCall_afterAlreadyRecovered_isRejectedWithoutTouchingProviderAgain() {
+        Payment payment = seedFailedPayment("pay_sequential_duplicate", "mandate_revoked");
+        RecoveryOrchestrationService firstAttemptOrchestration = orchestrationServiceWith(SettlementState.NOT_SETTLED,
+                "pay_sequential_duplicate", a -> ExecutionStatus.EXECUTED, a -> VerificationStatus.VERIFIED);
+
+        RecoveryOrchestrationResult firstResult = firstAttemptOrchestration.recover(payment.getId());
+        assertEquals(RecoveryOutcome.RECOVERED, firstResult.outcome());
+
+        RecoveryOrchestrationService secondAttemptOrchestration = orchestrationServiceWith(SettlementState.NOT_SETTLED,
+                "pay_sequential_duplicate", neverCalledExecutor(), neverCalledVerifier());
+
+        assertThrows(PaymentAlreadyRecoveredException.class, () -> secondAttemptOrchestration.recover(payment.getId()));
+
+        List<RecoveryCase> cases = recoveryCaseRepository.findAll().stream()
+                .filter(c -> c.getPayment().getId().equals(payment.getId()))
+                .toList();
+        assertEquals(1, cases.size(), "no second RecoveryCase must be created");
+        assertEquals(1, recoveryDecisionRepository.count(), "no second RecoveryDecision must be created");
+        assertEquals(1, recoveryActionRepository.count(), "no second RecoveryAction must be created");
     }
 }

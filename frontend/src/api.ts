@@ -41,6 +41,16 @@ export interface AuditEventSummary {
   createdAt: string;
 }
 
+// Mirrors com.recoversense.dashboard.AtRiskPaymentSummary exactly (M1.22).
+export interface AtRiskPaymentSummary {
+  paymentId: number;
+  externalPaymentId: string;
+  amount: number;
+  currency: string;
+  failureReason: string | null;
+  failedAt: string;
+}
+
 // Mirrors com.recoversense.recovery.RecoveryResponse exactly (M1.20).
 export interface RecoveryResponse {
   paymentId: number;
@@ -84,6 +94,10 @@ export function fetchDashboard(): Promise<DashboardResponse> {
 
 export function fetchAuditTrail(recoveryCaseId: number): Promise<AuditEventSummary[]> {
   return getJson<AuditEventSummary[]>(`/api/dashboard/cases/${recoveryCaseId}/audit`);
+}
+
+export function fetchAtRiskPayments(): Promise<AtRiskPaymentSummary[]> {
+  return getJson<AtRiskPaymentSummary[]>('/api/dashboard/payments/at-risk');
 }
 
 // RecoveryController returns 200 for every completed pipeline outcome

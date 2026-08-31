@@ -1,6 +1,7 @@
 package com.recoversense.recovery;
 
 import com.recoversense.service.InvalidPaymentStateException;
+import com.recoversense.service.PaymentAlreadyRecoveredException;
 import com.recoversense.service.PaymentNotFoundException;
 import com.recoversense.service.RecoveryOrchestrationResult;
 import com.recoversense.service.RecoveryOrchestrationService;
@@ -62,6 +63,17 @@ public class RecoveryController {
 
     @ExceptionHandler(InvalidPaymentStateException.class)
     public ResponseEntity<ErrorResponse> handleInvalidPaymentState(InvalidPaymentStateException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(new ErrorResponse(ex.getMessage()));
+    }
+
+    /**
+     * M1.22: the payment already has a RECOVERED RecoveryCase. Same status
+     * family as InvalidPaymentStateException - both are "this payment isn't
+     * in a state that allows starting a new recovery" - reported as a
+     * conflict, never a fabricated success or a raw 500.
+     */
+    @ExceptionHandler(PaymentAlreadyRecoveredException.class)
+    public ResponseEntity<ErrorResponse> handlePaymentAlreadyRecovered(PaymentAlreadyRecoveredException ex) {
         return ResponseEntity.status(HttpStatus.CONFLICT).body(new ErrorResponse(ex.getMessage()));
     }
 

@@ -2,15 +2,18 @@ package com.recoversense.dashboard;
 
 import com.recoversense.domain.PolicyResult;
 import com.recoversense.domain.Payment;
+import com.recoversense.domain.PaymentStatus;
 import com.recoversense.domain.RecoveryAction;
 import com.recoversense.domain.RecoveryCase;
 import com.recoversense.domain.RecoveryCaseStatus;
 import com.recoversense.domain.RecoveryDecision;
 import com.recoversense.domain.VerificationStatus;
 import com.recoversense.repository.AuditEventRepository;
+import com.recoversense.repository.PaymentRepository;
 import com.recoversense.repository.RecoveryActionRepository;
 import com.recoversense.repository.RecoveryCaseRepository;
 import com.recoversense.repository.RecoveryDecisionRepository;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -28,20 +31,25 @@ import java.util.Optional;
 public class DashboardMetricsService {
 
     private static final String POLICY_BLOCK_EVENT_TYPE = "ACTION_NOT_CREATED";
+    private static final int AT_RISK_LIMIT = 20;
+    private static final List<RecoveryCaseStatus> ACTIVE_CASE_STATUSES = List.of(RecoveryCaseStatus.OPEN, RecoveryCaseStatus.RECOVERED);
 
     private final RecoveryCaseRepository recoveryCaseRepository;
     private final RecoveryActionRepository recoveryActionRepository;
     private final RecoveryDecisionRepository recoveryDecisionRepository;
     private final AuditEventRepository auditEventRepository;
+    private final PaymentRepository paymentRepository;
 
     public DashboardMetricsService(RecoveryCaseRepository recoveryCaseRepository,
                                     RecoveryActionRepository recoveryActionRepository,
                                     RecoveryDecisionRepository recoveryDecisionRepository,
-                                    AuditEventRepository auditEventRepository) {
+                                    AuditEventRepository auditEventRepository,
+                                    PaymentRepository paymentRepository) {
         this.recoveryCaseRepository = recoveryCaseRepository;
         this.recoveryActionRepository = recoveryActionRepository;
         this.recoveryDecisionRepository = recoveryDecisionRepository;
         this.auditEventRepository = auditEventRepository;
+        this.paymentRepository = paymentRepository;
     }
 
     @Transactional(readOnly = true)
@@ -53,6 +61,26 @@ public class DashboardMetricsService {
     public List<AuditEventSummary> auditTrailFor(Long recoveryCaseId) {
         return auditEventRepository.findByRecoveryCase_IdOrderByCreatedAtAsc(recoveryCaseId).stream()
                 .map(event -> new AuditEventSummary(event.getEventType(), event.getEventPayload(), event.getCreatedAt()))
+                .toList();
+    }
+
+    /**
+     * FAILED payments with no OPEN or RECOVERED RecoveryCase - see M1.22
+     * ADR-012 (docs/DECISIONS.md). Never includes a payment RecoverSense
+     * already recovered, even though Payment.status stays FAILED for it.
+     */
+    @Transactional(readOnly = true)
+    public List<AtRiskPaymentSummary> atRiskPayments() {
+        return paymentRepository
+                .findAtRiskPayments(PaymentStatus.FAILED, ACTIVE_CASE_STATUSES, PageRequest.of(0, AT_RISK_LIMIT))
+                .stream()
+                .map(payment -> new AtRiskPaymentSummary(
+                        payment.getId(),
+                        payment.getExternalPaymentId(),
+                        payment.getAmount(),
+                        payment.getCurrency(),
+                        payment.getFailureReason(),
+                        payment.getFailedAt()))
                 .toList();
     }
 
