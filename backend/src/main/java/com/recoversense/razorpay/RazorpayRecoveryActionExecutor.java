@@ -7,6 +7,7 @@ import com.recoversense.service.RecoveryActionExecutor;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Duration;
 import java.util.Optional;
 
 /**
@@ -25,10 +26,19 @@ import java.util.Optional;
  * succeeded) into FAILED - see ProviderUnavailableException. On ambiguity,
  * reconciles via the deterministic reference_id before ever considering the
  * action unresolved; never issues a second create() call itself.
+ * <p>
+ * M1.19: reconciliation is a bounded read-only retry (RECONCILIATION_ATTEMPTS
+ * lookups, RECONCILIATION_DELAY apart), not a single lookup - Razorpay's
+ * reference_id index is not guaranteed to be immediately consistent with a
+ * just-accepted create(), so a single miss right after an ambiguous response
+ * isn't proof the resource doesn't exist. Only the read is retried; create()
+ * still happens at most once per action, ever.
  */
 public class RazorpayRecoveryActionExecutor implements RecoveryActionExecutor {
 
     static final String PAYMENT_LINK_ACTION_TYPE = "PAYMENT_LINK";
+    static final int RECONCILIATION_ATTEMPTS = 3;
+    static final Duration RECONCILIATION_DELAY = Duration.ofMillis(50);
 
     private final RazorpayPaymentLinkClient client;
 
@@ -65,15 +75,46 @@ public class RazorpayRecoveryActionExecutor implements RecoveryActionExecutor {
         return ExecutionStatus.EXECUTED;
     }
 
+    /**
+     * A miss on attempt 1 does not retry the lookup because Razorpay is
+     * definitively unreachable - it retries because the resource may exist
+     * server-side but not yet be visible via reference_id. If the lookup
+     * itself throws (Razorpay is unavailable, not just "not found yet"),
+     * that's a different, more certain failure mode and is not retried -
+     * unchanged from pre-M1.19 behavior.
+     */
     private RazorpayPaymentLink reconcile(String referenceId, ProviderUnavailableException originalFailure) {
-        Optional<RazorpayPaymentLink> found;
+        for (int attempt = 1; attempt <= RECONCILIATION_ATTEMPTS; attempt++) {
+            Optional<RazorpayPaymentLink> found;
+            try {
+                found = client.findByReferenceId(referenceId);
+            } catch (ProviderUnavailableException reconciliationAlsoUnavailable) {
+                originalFailure.addSuppressed(reconciliationAlsoUnavailable);
+                throw originalFailure;
+            }
+            if (found.isPresent()) {
+                return found.get();
+            }
+            if (attempt < RECONCILIATION_ATTEMPTS) {
+                sleepBetweenReconciliationAttempts(originalFailure);
+            }
+        }
+        throw originalFailure;
+    }
+
+    /**
+     * An interrupt during the reconciliation wait is treated the same as
+     * exhausting all attempts - the action stays PENDING, restored via the
+     * same original exception, rather than surfacing a new, unexpected
+     * exception type mid-execution.
+     */
+    private void sleepBetweenReconciliationAttempts(ProviderUnavailableException originalFailure) {
         try {
-            found = client.findByReferenceId(referenceId);
-        } catch (ProviderUnavailableException reconciliationAlsoUnavailable) {
-            originalFailure.addSuppressed(reconciliationAlsoUnavailable);
+            Thread.sleep(RECONCILIATION_DELAY.toMillis());
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
             throw originalFailure;
         }
-        return found.orElseThrow(() -> originalFailure);
     }
 
     static String referenceIdFor(RecoveryAction action) {

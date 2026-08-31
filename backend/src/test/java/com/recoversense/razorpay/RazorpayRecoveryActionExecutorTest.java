@@ -13,6 +13,8 @@ import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
 import java.lang.reflect.Field;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -52,15 +54,26 @@ class RazorpayRecoveryActionExecutorTest {
         }
     }
 
+    /**
+     * findResponses is consumed one per findByReferenceId() call (queue) so
+     * tests can script a sequence of misses followed by a hit - the bounded
+     * retry (M1.19) makes call *count*, not just the final answer, part of
+     * what these tests must prove. An empty queue yields Optional.empty(),
+     * matching the pre-M1.19 default.
+     */
     private static final class FakeClient implements RazorpayPaymentLinkClient {
         CreatePaymentLinkRequest lastCreateRequest;
+        int createCallCount;
         RuntimeException createThrows;
         RazorpayPaymentLink createReturns;
+
         RuntimeException findThrows;
-        Optional<RazorpayPaymentLink> findReturns = Optional.empty();
+        int findCallCount;
+        final Deque<Optional<RazorpayPaymentLink>> findResponses = new ArrayDeque<>();
 
         @Override
         public RazorpayPaymentLink create(CreatePaymentLinkRequest request) {
+            createCallCount++;
             lastCreateRequest = request;
             if (createThrows != null) {
                 throw createThrows;
@@ -75,10 +88,11 @@ class RazorpayRecoveryActionExecutorTest {
 
         @Override
         public Optional<RazorpayPaymentLink> findByReferenceId(String referenceId) {
+            findCallCount++;
             if (findThrows != null) {
                 throw findThrows;
             }
-            return findReturns;
+            return findResponses.isEmpty() ? Optional.empty() : findResponses.pollFirst();
         }
     }
 
@@ -95,6 +109,8 @@ class RazorpayRecoveryActionExecutorTest {
         assertEquals("plink_1", action.getExternalReference());
         assertEquals("rs-action-42", client.lastCreateRequest.referenceId());
         assertEquals(100000, client.lastCreateRequest.amountInSmallestUnit());
+        assertEquals(1, client.createCallCount);
+        assertEquals(0, client.findCallCount, "no ambiguity - reconciliation must never run");
     }
 
     @Test
@@ -108,20 +124,48 @@ class RazorpayRecoveryActionExecutorTest {
         ExecutionStatus outcome = executor.execute(action);
 
         assertEquals(ExecutionStatus.FAILED, outcome);
+        assertEquals(1, client.createCallCount);
     }
 
     @Test
-    void createTimesOut_reconciliationFindsLink_returnsExecuted_caseA() {
+    void createTimesOut_reconciliationFindsLinkFirstAttempt_returnsExecuted_caseA() {
         RecoveryAction action = seedAction("PAYMENT_LINK", "3");
         FakeClient client = new FakeClient();
         client.createThrows = new ProviderUnavailableException("timeout");
-        client.findReturns = Optional.of(new RazorpayPaymentLink("plink_3", "rs-action-42", RazorpayPaymentLinkStatus.CREATED, 100000, 0, "url"));
+        client.findResponses.add(Optional.of(new RazorpayPaymentLink("plink_3", "rs-action-42", RazorpayPaymentLinkStatus.CREATED, 100000, 0, "url")));
         RazorpayRecoveryActionExecutor executor = new RazorpayRecoveryActionExecutor(client);
 
         ExecutionStatus outcome = executor.execute(action);
 
         assertEquals(ExecutionStatus.EXECUTED, outcome);
         assertEquals("plink_3", action.getExternalReference());
+        assertEquals(1, client.createCallCount, "create() must be attempted exactly once, ever");
+        assertEquals(1, client.findCallCount, "found on the first lookup - no further attempts needed");
+    }
+
+    /**
+     * M1.19: the resource is not yet visible on the first two reconciliation
+     * lookups (a real Razorpay eventual-consistency window) but is found on
+     * the third - the bounded retry must not give up early, and it must
+     * still never re-issue create().
+     */
+    @Test
+    void createTimesOut_reconciliationFindsLinkOnThirdAttempt_returnsExecuted_eventualConsistency() {
+        RecoveryAction action = seedAction("PAYMENT_LINK", "3b");
+        FakeClient client = new FakeClient();
+        client.createThrows = new ProviderUnavailableException("timeout");
+        RazorpayPaymentLink link = new RazorpayPaymentLink("plink_3b", "rs-action-42", RazorpayPaymentLinkStatus.CREATED, 100000, 0, "url");
+        client.findResponses.add(Optional.empty());
+        client.findResponses.add(Optional.empty());
+        client.findResponses.add(Optional.of(link));
+        RazorpayRecoveryActionExecutor executor = new RazorpayRecoveryActionExecutor(client);
+
+        ExecutionStatus outcome = executor.execute(action);
+
+        assertEquals(ExecutionStatus.EXECUTED, outcome);
+        assertEquals("plink_3b", action.getExternalReference());
+        assertEquals(1, client.createCallCount, "create() must be attempted exactly once, ever");
+        assertEquals(3, client.findCallCount, "must have retried past the first two misses before finding it");
     }
 
     @Test
@@ -129,7 +173,9 @@ class RazorpayRecoveryActionExecutorTest {
         RecoveryAction action = seedAction("PAYMENT_LINK", "4");
         FakeClient client = new FakeClient();
         client.createThrows = new ProviderUnavailableException("timeout");
-        client.findReturns = Optional.empty();
+        client.findResponses.add(Optional.empty());
+        client.findResponses.add(Optional.empty());
+        client.findResponses.add(Optional.empty());
         RazorpayRecoveryActionExecutor executor = new RazorpayRecoveryActionExecutor(client);
 
         ProviderUnavailableException thrown = assertThrows(ProviderUnavailableException.class, () -> executor.execute(action));
@@ -139,10 +185,19 @@ class RazorpayRecoveryActionExecutorTest {
         // still be an UnsupportedOperationException so the existing
         // RecoveryActionExecutionService catch/PENDING/audit path applies.
         assertTrue(thrown instanceof UnsupportedOperationException);
+        assertEquals(1, client.createCallCount, "create() must be attempted exactly once, ever");
+        assertEquals(3, client.findCallCount, "must exhaust exactly the bounded retry budget, not more, not less");
+        assertEquals(ExecutionStatus.PENDING, action.getExecutionStatus(), "unresolved ambiguity must leave the action PENDING, never FAILED");
     }
 
+    /**
+     * Reconciliation's own lookup being unavailable (not just "not found") is
+     * a different, more certain failure than an eventual-consistency miss -
+     * preserved exactly as before M1.19: not retried, original exception
+     * carries the lookup failure as a suppressed exception.
+     */
     @Test
-    void createTimesOut_reconciliationAlsoTimesOut_throws_caseC() {
+    void createTimesOut_reconciliationAlsoTimesOut_throwsWithoutRetrying_caseC() {
         RecoveryAction action = seedAction("PAYMENT_LINK", "5");
         FakeClient client = new FakeClient();
         client.createThrows = new ProviderUnavailableException("create timed out");
@@ -152,6 +207,11 @@ class RazorpayRecoveryActionExecutorTest {
         assertThrows(ProviderUnavailableException.class, () -> executor.execute(action));
         // Only one create() attempt is expected: the executor must not retry
         // creation after a failed reconciliation.
+        assertEquals(1, client.createCallCount);
+        // A lookup failure (not a miss) is not retried - unchanged from
+        // pre-M1.19 behavior, since it signals Razorpay is unavailable, not
+        // that the resource simply isn't visible yet.
+        assertEquals(1, client.findCallCount);
     }
 
     @Test
