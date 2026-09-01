@@ -1,14 +1,14 @@
 # RecoverSense — Demo Scenarios
 
-## Scenario 1 — Hero
+## Scenario 1 — Hero (seeded by `DemoDataSeeder`, `demo` profile)
 Payment: ₹2,499
 Failure: mandate revoked
 Diagnosis: MANDATE_INVALID
 Strategy: REACQUIRE_MANDATE
-Policy: ALLOW
-Execution: provider or clearly labeled simulator
-Verification: PASS
-Outcome: VERIFIED
+Policy: **BLOCKED as of M1.23** — the settlement check always evaluates to UNKNOWN in the running application (no real source wired) and PolicyEngine fails closed. See README §16-17 / docs/PROJECT_STATE.md RISKS. `ALLOW`/`VERIFIED` below describes the target behavior once a real settlement source exists, not what the running app currently returns.
+Execution: not reached today (blocked at policy); REACQUIRE_MANDATE has no execution implementation regardless
+Verification: not reached today
+Outcome: BLOCKED (honest, audited)
 
 ## Scenario 2 — Insufficient funds
 Payment: ₹1,499

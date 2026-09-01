@@ -37,3 +37,9 @@ If a live provider call fails:
 - show the deterministic error handling
 - use the simulator only where the spec explicitly permits it
 - never fake a provider success
+
+## Reproducing this demo
+
+Run the backend with `--spring.profiles.active=demo` (see README §15) to seed one deterministic `FAILED` payment. No Razorpay or Claude credentials are required for steps 1-4 above.
+
+**Known limitation (M1.23):** the "already settled elsewhere" policy check has no real settlement source wired in the running application, so it always evaluates to UNKNOWN and `PolicyEngine` fails closed — every recovery attempt today blocks at the policy stage. Frame this honestly as the safety property it demonstrates ("RecoverSense won't act on unverifiable state") rather than a bug. Reaching `EXECUTED`/`VERIFIED`/`RECOVERED` currently requires the Razorpay Test Mode positive-path tests (`backend/src/test/java/com/recoversense/razorpay/`), which wire a simulated settlement state directly — not the running app.
