@@ -7,6 +7,7 @@ import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -22,12 +23,20 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * which is exactly why the browser 403 on POST /api/dashboard/payments/sync
  * went uncaught by the existing suite. Setting Origin here reproduces the
  * real cross-origin browser request from the Vite dev server.
+ * <p>
+ * M1.35: also proves app.cors.allowed-origins - set here to the local
+ * default plus one production-looking origin (comma-separated, exercising
+ * that support) - accepts both configured origins and rejects an
+ * unconfigured one.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
+@TestPropertySource(properties = "app.cors.allowed-origins=http://localhost:*,https://recoversense-demo.vercel.app")
 class DashboardCorsConfigTest {
 
     private static final String VITE_DEV_ORIGIN = "http://localhost:5173";
+    private static final String PROD_ORIGIN = "https://recoversense-demo.vercel.app";
+    private static final String UNCONFIGURED_ORIGIN = "https://evil.example.com";
 
     @Autowired
     private MockMvc mockMvc;
@@ -89,5 +98,30 @@ class DashboardCorsConfigTest {
                         .header("Origin", VITE_DEV_ORIGIN)
                         .header("Access-Control-Request-Method", "POST"))
                 .andExpect(status().isOk());
+    }
+
+    /**
+     * M1.35: the configured production origin (Vercel) must be treated
+     * identically to the local dev origin - proves app.cors.allowed-origins
+     * is actually read, not just defaulted.
+     */
+    @Test
+    void configuredProductionOrigin_allowedByCors() throws Exception {
+        mockMvc.perform(options("/api/dashboard/metrics")
+                        .header("Origin", PROD_ORIGIN)
+                        .header("Access-Control-Request-Method", "GET"))
+                .andExpect(status().isOk());
+    }
+
+    /**
+     * M1.35: an origin that was never configured must still be rejected -
+     * proves the change didn't accidentally widen to a wildcard.
+     */
+    @Test
+    void unconfiguredOrigin_rejectedByCors() throws Exception {
+        mockMvc.perform(options("/api/dashboard/metrics")
+                        .header("Origin", UNCONFIGURED_ORIGIN)
+                        .header("Access-Control-Request-Method", "GET"))
+                .andExpect(status().isForbidden());
     }
 }
