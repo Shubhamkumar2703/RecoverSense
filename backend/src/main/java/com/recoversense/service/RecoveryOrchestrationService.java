@@ -5,6 +5,8 @@ import com.recoversense.domain.RecoveryAction;
 import com.recoversense.domain.RecoveryCase;
 import com.recoversense.domain.RecoveryCaseStatus;
 import com.recoversense.domain.VerificationStatus;
+import com.recoversense.repository.RecoveryActionRepository;
+import com.recoversense.repository.RecoveryCaseRepository;
 import org.springframework.stereotype.Service;
 
 import java.util.Optional;
@@ -35,15 +37,21 @@ public class RecoveryOrchestrationService {
     private final RecoveryLifecycleService recoveryLifecycleService;
     private final RecoveryActionExecutionService recoveryActionExecutionService;
     private final RecoveryActionVerificationService recoveryActionVerificationService;
+    private final RecoveryCaseRepository recoveryCaseRepository;
+    private final RecoveryActionRepository recoveryActionRepository;
 
     public RecoveryOrchestrationService(DiagnosisService diagnosisService,
                                          RecoveryLifecycleService recoveryLifecycleService,
                                          RecoveryActionExecutionService recoveryActionExecutionService,
-                                         RecoveryActionVerificationService recoveryActionVerificationService) {
+                                         RecoveryActionVerificationService recoveryActionVerificationService,
+                                         RecoveryCaseRepository recoveryCaseRepository,
+                                         RecoveryActionRepository recoveryActionRepository) {
         this.diagnosisService = diagnosisService;
         this.recoveryLifecycleService = recoveryLifecycleService;
         this.recoveryActionExecutionService = recoveryActionExecutionService;
         this.recoveryActionVerificationService = recoveryActionVerificationService;
+        this.recoveryCaseRepository = recoveryCaseRepository;
+        this.recoveryActionRepository = recoveryActionRepository;
     }
 
     /**
@@ -71,25 +79,65 @@ public class RecoveryOrchestrationService {
             return result(lifecycleResult, Optional.of(executedAction), RecoveryOutcome.EXECUTION_FAILED);
         }
 
-        RecoveryAction verifiedAction;
-        try {
-            verifiedAction = recoveryActionVerificationService.attemptVerification(executedAction.getId());
-        } catch (UnsupportedOperationException verificationUnavailable) {
-            return result(lifecycleResult, Optional.of(executedAction), RecoveryOutcome.VERIFICATION_UNAVAILABLE);
-        }
-        if (verifiedAction.getVerificationStatus() != VerificationStatus.VERIFIED) {
-            return result(lifecycleResult, Optional.of(verifiedAction), RecoveryOutcome.VERIFICATION_FAILED);
+        // M1.25: verification is a deliberate second phase (see #verify),
+        // never automatic - some actions (a real Payment Link) require a
+        // human to act out-of-band first, and RecoveryActionVerificationService's
+        // verification is one-shot/terminal, so attempting it here before
+        // that happens would permanently burn the only real attempt.
+        return result(lifecycleResult, Optional.of(executedAction), RecoveryOutcome.EXECUTED_AWAITING_VERIFICATION);
+    }
+
+    /**
+     * M1.25 phase 2 / M1.26: independently re-verifies the action recover()
+     * already created and executed for this case, and transitions the case
+     * to RECOVERED only if that verification confirms it. Never creates a
+     * case/decision/action and never calls an executor - reuses
+     * RecoveryActionVerificationService's verification boundary unchanged.
+     * <p>
+     * Idempotent against the one truly terminal state: once VERIFIED (from
+     * an earlier verify() call), this returns that existing RECOVERED state
+     * without attempting verification again - a repeated "Verify payment"
+     * click after success is always safe and never re-transitions the case.
+     * <p>
+     * M1.26: a prior FAILED result is NOT short-circuited - it is retried
+     * through the real independent re-fetch, because "FAILED" from a real
+     * Payment Link most often means "not paid yet", not "never verifiable"
+     * (see RecoveryActionVerificationService's relaxed guard). This never
+     * fabricates anything and never touches the executor either way - only
+     * VERIFIED skips a repeat provider call.
+     */
+    public RecoveryVerificationResult verify(Long recoveryCaseId) {
+        RecoveryCase recoveryCase = recoveryCaseRepository.findById(recoveryCaseId)
+                .orElseThrow(() -> new RecoveryCaseNotFoundException(recoveryCaseId));
+        RecoveryAction action = recoveryActionRepository.findTopByRecoveryCaseOrderByIdDesc(recoveryCase)
+                .orElseThrow(() -> new RecoveryActionNotFoundException(
+                        "No recovery action exists for recovery case " + recoveryCaseId));
+
+        if (action.getVerificationStatus() == VerificationStatus.VERIFIED) {
+            return verificationResult(recoveryCase, action, RecoveryOutcome.RECOVERED);
         }
 
-        RecoveryCase recoveredCase = recoveryLifecycleService.transitionCase(
-                lifecycleResult.recoveryCase().getId(), RecoveryCaseStatus.RECOVERED);
-        return new RecoveryOrchestrationResult(recoveredCase, lifecycleResult.decision(),
-                lifecycleResult.policyDecision(), Optional.of(verifiedAction), RecoveryOutcome.RECOVERED);
+        RecoveryAction verifiedAction;
+        try {
+            verifiedAction = recoveryActionVerificationService.attemptVerification(action.getId());
+        } catch (UnsupportedOperationException verificationUnavailable) {
+            return verificationResult(recoveryCase, action, RecoveryOutcome.VERIFICATION_UNAVAILABLE);
+        }
+        if (verifiedAction.getVerificationStatus() != VerificationStatus.VERIFIED) {
+            return verificationResult(recoveryCase, verifiedAction, RecoveryOutcome.VERIFICATION_FAILED);
+        }
+
+        RecoveryCase recoveredCase = recoveryLifecycleService.transitionCase(recoveryCaseId, RecoveryCaseStatus.RECOVERED);
+        return verificationResult(recoveredCase, verifiedAction, RecoveryOutcome.RECOVERED);
     }
 
     private RecoveryOrchestrationResult result(RecoveryLifecycleResult lifecycleResult, Optional<RecoveryAction> action,
                                                 RecoveryOutcome outcome) {
         return new RecoveryOrchestrationResult(lifecycleResult.recoveryCase(), lifecycleResult.decision(),
                 lifecycleResult.policyDecision(), action, outcome);
+    }
+
+    private RecoveryVerificationResult verificationResult(RecoveryCase recoveryCase, RecoveryAction action, RecoveryOutcome outcome) {
+        return new RecoveryVerificationResult(recoveryCase, action.getRecoveryDecision(), action.getPolicyResult(), action, outcome);
     }
 }

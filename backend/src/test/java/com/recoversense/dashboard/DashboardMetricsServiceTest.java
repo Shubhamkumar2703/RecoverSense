@@ -96,7 +96,8 @@ class DashboardMetricsServiceTest {
                 new RecoveryActionExecutionService(recoveryActionRepository, auditEventRepository, executor);
         RecoveryActionVerificationService verificationService =
                 new RecoveryActionVerificationService(recoveryActionRepository, auditEventRepository, verifier);
-        return new RecoveryOrchestrationService(diagnosisService, lifecycleService, executionService, verificationService);
+        return new RecoveryOrchestrationService(diagnosisService, lifecycleService, executionService, verificationService,
+                recoveryCaseRepository, recoveryActionRepository);
     }
 
     @Test
@@ -109,6 +110,32 @@ class DashboardMetricsServiceTest {
         assertEquals(0, summary.verifiedActions());
         assertEquals(0, summary.policyBlocks());
         assertTrue(dashboardMetricsService.buildDashboard().recentCases().isEmpty());
+    }
+
+    /**
+     * M1.26 Phase 5/7: dataSource must never be hidden, and the new
+     * batch-measured-outcome counts must reflect real persisted state, not
+     * be hardcoded.
+     */
+    @Test
+    void dataSourceAndBatchCounts_reflectPersistedState() {
+        Payment realPayment = seedFailedPayment("pay_real_batch_1", "mandate_revoked", new BigDecimal("1000.00"));
+        RecoveryOrchestrationService realOrchestration = orchestrationServiceWith(SettlementState.NOT_SETTLED, "pay_real_batch_1",
+                a -> ExecutionStatus.EXECUTED, a -> VerificationStatus.VERIFIED);
+        RecoveryOrchestrationResult realRecoverResult = realOrchestration.recover(realPayment.getId());
+        realOrchestration.verify(realRecoverResult.recoveryCase().getId());
+
+        Payment demoPayment = seedFailedPayment("pay_demo_batch_1", "mandate_revoked", new BigDecimal("500.00"));
+        RecoveryOrchestrationService demoOrchestration = orchestrationServiceWith(SettlementState.NOT_SETTLED, "pay_demo_batch_1",
+                a -> ExecutionStatus.EXECUTED, a -> VerificationStatus.FAILED);
+        demoOrchestration.recover(demoPayment.getId());
+
+        DashboardResponse dashboard = dashboardMetricsService.buildDashboard();
+        assertEquals("REAL", onlyRow(dashboard, "pay_real_batch_1").dataSource());
+        assertEquals("DEMO", onlyRow(dashboard, "pay_demo_batch_1").dataSource());
+
+        assertEquals(2, dashboard.summary().failedPaymentsCount());
+        assertEquals(1, dashboard.summary().recoveredCasesCount());
     }
 
     @Test
@@ -142,7 +169,9 @@ class DashboardMetricsServiceTest {
         RecoveryOrchestrationService orchestration = orchestrationServiceWith(SettlementState.NOT_SETTLED, "pay_recovered",
                 a -> ExecutionStatus.EXECUTED, a -> VerificationStatus.VERIFIED);
 
-        RecoveryOrchestrationResult result = orchestration.recover(payment.getId());
+        // M1.25: recover() only executes; verify() is the separate second phase.
+        RecoveryOrchestrationResult recoverResult = orchestration.recover(payment.getId());
+        var result = orchestration.verify(recoverResult.recoveryCase().getId());
         assertEquals(RecoveryOutcome.RECOVERED, result.outcome());
 
         DashboardResponse dashboard = dashboardMetricsService.buildDashboard();
@@ -164,9 +193,10 @@ class DashboardMetricsServiceTest {
     @Test
     void recoveryRate_reflectsPartialRecoveryAcrossCases() {
         Payment recoveredPayment = seedFailedPayment("pay_partial_recovered", "mandate_revoked", new BigDecimal("1000.00"));
-        orchestrationServiceWith(SettlementState.NOT_SETTLED, "pay_partial_recovered",
-                a -> ExecutionStatus.EXECUTED, a -> VerificationStatus.VERIFIED)
-                .recover(recoveredPayment.getId());
+        RecoveryOrchestrationService recoveredOrchestration = orchestrationServiceWith(SettlementState.NOT_SETTLED, "pay_partial_recovered",
+                a -> ExecutionStatus.EXECUTED, a -> VerificationStatus.VERIFIED);
+        RecoveryOrchestrationResult recoveredFirstPhase = recoveredOrchestration.recover(recoveredPayment.getId());
+        recoveredOrchestration.verify(recoveredFirstPhase.recoveryCase().getId());
 
         Payment unrecoveredPayment = seedFailedPayment("pay_partial_unrecovered", "mandate_revoked", new BigDecimal("1000.00"));
         orchestrationServiceWith(SettlementState.NOT_SETTLED, "pay_partial_unrecovered",
@@ -182,9 +212,9 @@ class DashboardMetricsServiceTest {
     @Test
     void strategyMix_groupsByDecisionStrategy() {
         Payment mandatePayment = seedFailedPayment("pay_strategy_mandate", "mandate_revoked", new BigDecimal("500.00"));
-        orchestrationServiceWith(SettlementState.NOT_SETTLED, "pay_strategy_mandate",
-                a -> ExecutionStatus.EXECUTED, a -> VerificationStatus.VERIFIED)
-                .recover(mandatePayment.getId());
+        RecoveryOrchestrationService mandateOrchestration = orchestrationServiceWith(SettlementState.NOT_SETTLED, "pay_strategy_mandate",
+                a -> ExecutionStatus.EXECUTED, a -> VerificationStatus.VERIFIED);
+        mandateOrchestration.recover(mandatePayment.getId());
 
         Payment waitPayment = seedFailedPayment("pay_strategy_wait", "insufficient_funds", new BigDecimal("500.00"));
         orchestrationServiceWith(SettlementState.NOT_SETTLED, "pay_strategy_wait",
@@ -203,11 +233,12 @@ class DashboardMetricsServiceTest {
     @Test
     void auditTrailFor_returnsExistingVocabularyInOrder() {
         Payment payment = seedFailedPayment("pay_audit", "mandate_revoked", new BigDecimal("100.00"));
-        RecoveryOrchestrationResult result = orchestrationServiceWith(SettlementState.NOT_SETTLED, "pay_audit",
-                a -> ExecutionStatus.EXECUTED, a -> VerificationStatus.VERIFIED)
-                .recover(payment.getId());
+        RecoveryOrchestrationService orchestration = orchestrationServiceWith(SettlementState.NOT_SETTLED, "pay_audit",
+                a -> ExecutionStatus.EXECUTED, a -> VerificationStatus.VERIFIED);
+        RecoveryOrchestrationResult recoverResult = orchestration.recover(payment.getId());
+        orchestration.verify(recoverResult.recoveryCase().getId());
 
-        List<AuditEventSummary> trail = dashboardMetricsService.auditTrailFor(result.recoveryCase().getId());
+        List<AuditEventSummary> trail = dashboardMetricsService.auditTrailFor(recoverResult.recoveryCase().getId());
 
         List<String> eventTypes = trail.stream().map(AuditEventSummary::eventType).toList();
         assertEquals(List.of("RECOVERY_CASE_OPENED", "RECOVERY_DECISION_RECORDED", "POLICY_EVALUATED",

@@ -65,6 +65,20 @@ public final class DiagnosisEngine {
                     "failure reason indicates insufficient funds: reason=" + reason);
         }
 
+        // M1.25: a second, independent evidence source for REPEATED_FAILURE,
+        // alongside retry_count below - the failure reason text itself can
+        // already assert repeated failure (e.g. a gateway/webhook payload
+        // that says so directly), exactly like every other category here is
+        // driven by matching the reason text against known keywords. This is
+        // not specific to any one payment: any failureReason containing both
+        // words reaches REPEATED_FAILURE, the same way "mandate"+"revoked"
+        // reaches MANDATE_INVALID above - see DiagnosisEngineTest for the
+        // regression coverage.
+        if (normalizedReason != null && normalizedReason.contains("repeated") && normalizedReason.contains("fail")) {
+            return new DiagnosisResult("REPEATED_FAILURE", HIGH_CONFIDENCE,
+                    "failure reason indicates repeated failure: reason=" + reason);
+        }
+
         if (context.retryCount() >= REPEATED_FAILURE_RETRY_THRESHOLD) {
             return new DiagnosisResult("REPEATED_FAILURE", HIGH_CONFIDENCE,
                     "retry_count=" + context.retryCount() + " has reached the repeated-failure threshold of "

@@ -19,6 +19,8 @@ public interface RecoveryCaseRepository extends JpaRepository<RecoveryCase, Long
 
     List<RecoveryCase> findTop20ByOrderByOpenedAtDesc();
 
+    long countByStatus(RecoveryCaseStatus status);
+
     @Query("select coalesce(sum(rc.payment.amount), 0) from RecoveryCase rc")
     BigDecimal sumPaymentAmount();
 

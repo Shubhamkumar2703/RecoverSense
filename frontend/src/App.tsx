@@ -5,6 +5,8 @@ import {
   fetchAuditTrail,
   fetchDashboard,
   recoverPayment,
+  syncRazorpayPayments,
+  verifyRecovery,
   RecoveryApiError,
   type AtRiskPaymentSummary,
   type AuditEventSummary,
@@ -24,6 +26,17 @@ const STRATEGY_LABELS: Record<string, string> = {
 function strategyLabel(strategy: string | null): string {
   if (!strategy) return '—';
   return STRATEGY_LABELS[strategy] ?? strategy;
+}
+
+// M1.27: truthful provider label - never says "Claude" unless Claude was
+// actually invoked (see DiagnosisSource.parsePrefix on the backend). This
+// build runs without CLAUDE_API_KEY, so every diagnosis is currently
+// "Deterministic Demo" - the label reflects whatever the backend recorded,
+// not a hardcoded assumption.
+function diagnosisSourceLabel(diagnosisSource: string | null): string {
+  if (diagnosisSource === 'CLAUDE') return 'Claude';
+  if (diagnosisSource === 'SIMULATED') return 'Deterministic Demo';
+  return '—';
 }
 
 function formatCurrency(amount: number, currency: string): string {
@@ -63,6 +76,9 @@ const CASE_STATUS_TONES: Partial<Record<string, PillTone>> = {
   CLOSED: 'neutral',
   FAILED: 'critical',
 };
+// M1.26: REAL (Razorpay-synced) vs DEMO (DemoDataSeeder) - never hidden, see
+// DashboardMetricsService.classifyDataSource.
+const DATA_SOURCE_TONES: Partial<Record<string, PillTone>> = { REAL: 'good', DEMO: 'neutral' };
 
 // Plain-language outcome text. RECOVERED's headline is the only one that
 // says "Recovered" - every other outcome describes what actually happened
@@ -72,7 +88,13 @@ const OUTCOME_INFO: Record<string, { headline: string; tone: PillTone }> = {
   RECOVERED: { headline: 'Recovered successfully', tone: 'good' },
   BLOCKED: { headline: 'Recovery blocked by policy', tone: 'neutral' },
   EXECUTION_FAILED: { headline: 'Recovery action could not be executed', tone: 'critical' },
-  VERIFICATION_FAILED: { headline: 'Action executed, but recovery was not verified', tone: 'warn' },
+  // Not "recovered" and not "failed" - a real Payment Link was created and
+  // is now waiting on a human to pay it; verification is a deliberate next
+  // step, never automatic (M1.25).
+  EXECUTED_AWAITING_VERIFICATION: { headline: 'Payment link created - awaiting payment', tone: 'warn' },
+  // M1.26: not permanently failed - most often means "not paid yet". Verify
+  // payment remains available so the operator can check again once paid.
+  VERIFICATION_FAILED: { headline: 'Not verified yet - has the payment been completed?', tone: 'warn' },
   EXECUTION_UNAVAILABLE: { headline: 'Recovery provider is currently unavailable', tone: 'warn' },
   VERIFICATION_UNAVAILABLE: { headline: 'Recovery could not be verified right now', tone: 'warn' },
 };
@@ -81,13 +103,26 @@ function RecoveryResultCard({
   result,
   errorMessage,
   onDismiss,
+  onVerify,
+  verifying,
 }: {
   result: RecoveryResponse | null;
   errorMessage: string | null;
   onDismiss: () => void;
+  onVerify: (recoveryCaseId: number) => void;
+  verifying: boolean;
 }) {
   if (!result && !errorMessage) return null;
   const outcome = result ? OUTCOME_INFO[result.outcome] : null;
+  // Only the exact moment recover() just created a fresh Payment Link
+  // carries a URL - never reconstructed, never shown once stale.
+  const canOpenPaymentLink = result?.providerUrl != null;
+  // M1.26: FAILED is not terminal (see RecoveryActionVerificationService) -
+  // a real Payment Link that was checked too early can be verified again
+  // once actually paid, so Verify stays available after VERIFICATION_FAILED
+  // too. Only RECOVERED (already VERIFIED) removes it.
+  const canVerify = result?.outcome === 'EXECUTED_AWAITING_VERIFICATION' || result?.outcome === 'VERIFICATION_FAILED';
+  const isRetry = result?.outcome === 'VERIFICATION_FAILED';
 
   return (
     <div className="card recovery-result">
@@ -110,6 +145,10 @@ function RecoveryResultCard({
             <b>{result.diagnosisCategory ?? '—'}</b>
           </div>
           <div className="decision-row">
+            <span>Provider</span>
+            <b>{diagnosisSourceLabel(result.diagnosisSource)}</b>
+          </div>
+          <div className="decision-row">
             <span>Strategy</span>
             <b>{strategyLabel(result.strategy)}</b>
           </div>
@@ -125,6 +164,37 @@ function RecoveryResultCard({
             <span>Verification</span>
             <Pill value={result.verificationStatus} tones={VERIFICATION_TONES} />
           </div>
+          {(canOpenPaymentLink || canVerify) && (
+            <div className="recovery-result-actions">
+              {canOpenPaymentLink && (
+                <a className="recover-btn" href={result.providerUrl ?? '#'} target="_blank" rel="noreferrer">
+                  Open payment link
+                </a>
+              )}
+              {canVerify && (
+                <button
+                  type="button"
+                  className="recover-btn"
+                  disabled={verifying}
+                  onClick={() => onVerify(result.recoveryCaseId)}
+                >
+                  {verifying ? 'Verifying…' : isRetry ? 'Verify again' : 'Verify payment'}
+                </button>
+              )}
+            </div>
+          )}
+          {canVerify && (
+            <p className="muted" style={{ marginTop: 10 }}>
+              {isRetry
+                ? 'Not verified yet - if the payment has since been completed, click Verify again. RecoverSense re-fetches the real Razorpay state independently each time; nothing is assumed from a previous check.'
+                : 'Complete the Test Mode payment on the hosted link, then click Verify payment - RecoverSense will independently re-fetch the real Razorpay state before counting this as recovered.'}
+            </p>
+          )}
+          {result.outcome === 'BLOCKED' && (
+            <p className="muted" style={{ marginTop: 10 }}>
+              Blocked by policy - see Audit Trail for this case to see exactly which of the 7 checks failed and why.
+            </p>
+          )}
         </>
       ) : null}
     </div>
@@ -153,6 +223,10 @@ function DecisionPanel({ recoveryCase }: { recoveryCase: RecentCaseSummary }) {
         <b>
           {recoveryCase.diagnosisCategory ?? '—'} · {confidence}
         </b>
+      </div>
+      <div className="decision-row">
+        <span>Provider</span>
+        <b>{diagnosisSourceLabel(recoveryCase.diagnosisSource)}</b>
       </div>
       <div className="decision-row">
         <span>Policy</span>
@@ -192,33 +266,259 @@ function AuditPanel({ recoveryCase, events }: { recoveryCase: RecentCaseSummary 
   );
 }
 
+function CaseDetailSection({
+  selectedCase,
+  auditEvents,
+}: {
+  selectedCase: RecentCaseSummary | null;
+  auditEvents: AuditEventSummary[];
+}) {
+  return (
+    <section className="bottom">
+      {selectedCase ? (
+        <DecisionPanel recoveryCase={selectedCase} />
+      ) : (
+        <div className="decision">
+          <div className="eyebrow">No case selected</div>
+          <p>Select a row from the table above to see its decision detail.</p>
+        </div>
+      )}
+      <AuditPanel recoveryCase={selectedCase} events={auditEvents} />
+    </section>
+  );
+}
+
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleString('en-IN', { hour12: false });
 }
 
-function AtRiskTable({
-  payments,
+function CasesTable({
+  cases,
+  selectedCaseId,
+  onSelectCase,
   recoveringPaymentId,
   onRecover,
+  verifyingCaseId,
+  onVerify,
 }: {
-  payments: AtRiskPaymentSummary[];
+  cases: RecentCaseSummary[];
+  selectedCaseId: number | null;
+  onSelectCase: (caseId: number) => void;
   recoveringPaymentId: number | null;
   onRecover: (paymentId: number) => void;
+  verifyingCaseId: number | null;
+  onVerify: (recoveryCaseId: number) => void;
 }) {
   return (
     <section className="card table-card">
       <div className="table-head">
-        <div className="card-title">At-risk payments</div>
-        <div className="muted">Showing {payments.length}</div>
+        <div className="card-title">Recovery cases</div>
+        <div className="muted">Showing {cases.length}</div>
       </div>
-      {payments.length === 0 ? (
-        <div className="empty-state">No failed payments are currently at risk - every failed payment already has an open or recovered case.</div>
+      {cases.length === 0 ? (
+        <div className="empty-state">No recovery cases yet.</div>
       ) : (
         <div className="table-scroll">
           <table>
             <thead>
               <tr>
                 <th>Payment</th>
+                <th>Amount</th>
+                <th>Failure</th>
+                <th>Source</th>
+                <th>AI recommendation</th>
+                <th>Policy</th>
+                <th>Execution</th>
+                <th>Verification</th>
+                <th>Case</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {cases.map((row) => (
+                <tr
+                  key={row.recoveryCaseId}
+                  className={row.recoveryCaseId === selectedCaseId ? 'selected' : ''}
+                  onClick={() => onSelectCase(row.recoveryCaseId)}
+                >
+                  <td>
+                    <b>{row.externalPaymentId}</b>
+                  </td>
+                  <td>{formatCurrency(row.amount, row.currency)}</td>
+                  <td>{row.failureReason ?? '—'}</td>
+                  <td>
+                    <Pill value={row.dataSource} tones={DATA_SOURCE_TONES} />
+                  </td>
+                  <td>{strategyLabel(row.strategy)}</td>
+                  <td>
+                    <Pill value={row.policyResult} tones={POLICY_TONES} />
+                  </td>
+                  <td>
+                    <Pill value={row.executionStatus} tones={EXECUTION_TONES} />
+                  </td>
+                  <td>
+                    <Pill value={row.verificationStatus} tones={VERIFICATION_TONES} />
+                  </td>
+                  <td>
+                    <Pill value={row.caseStatus} tones={CASE_STATUS_TONES} />
+                  </td>
+                  <td>
+                    {row.verificationStatus === 'VERIFIED' || row.caseStatus === 'RECOVERED' ? null : row.caseStatus ===
+                        'OPEN' && row.executionStatus === 'EXECUTED' ? (
+                      <button
+                        type="button"
+                        className="recover-btn"
+                        disabled={verifyingCaseId !== null}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onVerify(row.recoveryCaseId);
+                        }}
+                      >
+                        {verifyingCaseId === row.recoveryCaseId ? 'Verifying…' : 'Verify'}
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="recover-btn"
+                        disabled={recoveringPaymentId !== null}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onRecover(row.paymentId);
+                        }}
+                      >
+                        {recoveringPaymentId === row.paymentId ? 'Recovering…' : 'Recover'}
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
+// Static, honest description of what's actually wired up - not a live health
+// check (no backend endpoint exists for this, and M1.24 adds none). Every
+// status a browser cannot actually verify (Razorpay/Claude credentials are
+// server-side only and never exposed to the frontend) uses neutral wording
+// rather than a connected/disconnected claim - see README.md #16/#17, which
+// this mirrors.
+function IntegrationsView() {
+  const items: { name: string; status: string; tone: PillTone; detail: string }[] = [
+    {
+      name: 'Razorpay — Payment Links',
+      status: 'Available in backend',
+      tone: 'neutral',
+      detail:
+        'Execution wires a real Razorpay Test Mode Payment Link call when razorpay.key-id/key-secret are configured server-side. Credentials are never exposed to the browser, so this page cannot show a live connected/disconnected status.',
+    },
+    {
+      name: 'Razorpay — Payment Link verification',
+      status: 'Available in backend',
+      tone: 'neutral',
+      detail: 'Verification independently re-fetches the Payment Link state from Razorpay rather than trusting the execution call\'s own success response. A prior unpaid check is not permanent — verifying again after the customer pays is supported.',
+    },
+    {
+      name: 'Razorpay — payment ingestion (sync)',
+      status: 'Available in backend',
+      tone: 'neutral',
+      detail: 'Sync Razorpay Test Mode reads real failed payments from Razorpay (GET /v1/payments) and inserts any not already known locally. Read-only against Razorpay; never creates a recovery case or executes anything on its own.',
+    },
+    {
+      name: 'Settlement verification',
+      status: 'Unavailable in production — fails closed',
+      tone: 'warn',
+      detail:
+        'No real settlement source is wired for production traffic. The policy check for "already settled elsewhere" evaluates to unknown, and RecoverSense\'s policy engine blocks recovery rather than assume it is safe. The demo profile additionally simulates a NOT_SETTLED answer for one or more explicitly configured payment ids only — never for arbitrary payments, and never outside the demo profile.',
+    },
+    {
+      name: 'Claude diagnosis',
+      status: 'Not exposed to browser',
+      tone: 'neutral',
+      detail:
+        'Enabled server-side only when claude.api-key is configured. A deterministic, clearly-labeled simulated classifier is always available as the fallback diagnosis source, so the pipeline never blocks on Claude being unavailable.',
+    },
+    {
+      name: 'Database',
+      status: 'Connected',
+      tone: 'good',
+      detail: 'PostgreSQL. Every figure on this dashboard — at-risk payments, recovery cases, metrics, audit trail — comes from real persisted RecoverSense data, never synthetic numbers.',
+    },
+  ];
+
+  return (
+    <section className="card table-card">
+      <div className="table-head">
+        <div className="card-title">Integrations</div>
+        <div className="muted">Read-only — reflects documented backend configuration, not a live health check</div>
+      </div>
+      <div className="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Integration</th>
+              <th>Status</th>
+              <th>What this means</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((item) => (
+              <tr key={item.name}>
+                <td>
+                  <b>{item.name}</b>
+                </td>
+                <td>
+                  <span className={`pill ${item.tone}`}>{item.status}</span>
+                </td>
+                <td style={{ whiteSpace: 'normal', maxWidth: 480 }}>{item.detail}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function AtRiskTable({
+  payments,
+  recoveringPaymentId,
+  onRecover,
+  onSync,
+  syncing,
+  syncMessage,
+}: {
+  payments: AtRiskPaymentSummary[];
+  recoveringPaymentId: number | null;
+  onRecover: (paymentId: number) => void;
+  onSync: () => void;
+  syncing: boolean;
+  syncMessage: string | null;
+}) {
+  return (
+    <section className="card table-card">
+      <div className="table-head">
+        <div className="card-title">At-risk payments</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          {syncMessage && <span className="muted">{syncMessage}</span>}
+          <button type="button" className="recover-btn" disabled={syncing} onClick={onSync}>
+            {syncing ? 'Syncing…' : 'Sync Razorpay Test Mode'}
+          </button>
+          <span className="muted">Showing {payments.length}</span>
+        </div>
+      </div>
+      {payments.length === 0 ? (
+        <div className="empty-state">No failed payments currently require recovery.</div>
+      ) : (
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Payment</th>
+                <th>Source</th>
                 <th>Amount</th>
                 <th>Failure</th>
                 <th>Failed at</th>
@@ -230,6 +530,9 @@ function AtRiskTable({
                 <tr key={row.paymentId}>
                   <td>
                     <b>{row.externalPaymentId}</b>
+                  </td>
+                  <td>
+                    <Pill value={row.dataSource} tones={DATA_SOURCE_TONES} />
                   </td>
                   <td>{formatCurrency(row.amount, row.currency)}</td>
                   <td>{row.failureReason ?? '—'}</td>
@@ -254,7 +557,43 @@ function AtRiskTable({
   );
 }
 
-type WorkspaceView = 'overview' | 'at-risk';
+type WorkspaceView = 'overview' | 'at-risk' | 'cases' | 'audit' | 'integrations';
+
+function NavLink({
+  view,
+  label,
+  activeView,
+  onSelect,
+}: {
+  view: WorkspaceView;
+  label: string;
+  activeView: WorkspaceView;
+  onSelect: (view: WorkspaceView) => void;
+}) {
+  return (
+    <a
+      className={activeView === view ? 'active' : ''}
+      href="#"
+      onClick={(event) => {
+        event.preventDefault();
+        onSelect(view);
+      }}
+    >
+      {label}
+    </a>
+  );
+}
+
+const VIEW_COPY: Record<WorkspaceView, { title: string; subtitle: string }> = {
+  overview: { title: 'Recovery Overview', subtitle: 'Live view of revenue at risk and recovery decisions' },
+  'at-risk': {
+    title: 'At-Risk Payments',
+    subtitle: 'Failed payments RecoverSense has not yet recovered - start recovery from here',
+  },
+  cases: { title: 'Recovery Cases', subtitle: 'Every recovery case RecoverSense has opened, with its decision detail' },
+  audit: { title: 'Audit Trail', subtitle: 'The recorded decision trail for a selected recovery case' },
+  integrations: { title: 'Integrations', subtitle: 'What is actually connected, real, or simulated in this build' },
+};
 
 export default function App() {
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
@@ -262,10 +601,13 @@ export default function App() {
   const [selectedCaseId, setSelectedCaseId] = useState<number | null>(null);
   const [auditEvents, setAuditEvents] = useState<AuditEventSummary[]>([]);
   const [recoveringPaymentId, setRecoveringPaymentId] = useState<number | null>(null);
+  const [verifyingCaseId, setVerifyingCaseId] = useState<number | null>(null);
   const [recoveryResult, setRecoveryResult] = useState<RecoveryResponse | null>(null);
   const [recoveryErrorText, setRecoveryErrorText] = useState<string | null>(null);
   const [activeView, setActiveView] = useState<WorkspaceView>('overview');
   const [atRiskPayments, setAtRiskPayments] = useState<AtRiskPaymentSummary[]>([]);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
 
   const loadAtRiskPayments = useCallback(() => {
     return fetchAtRiskPayments()
@@ -318,12 +660,61 @@ export default function App() {
       setRecoveryResult(result);
       await loadDashboard();
       await loadAtRiskPayments();
+      // recoverPayment always creates a brand-new case, so this always
+      // differs from whatever was selected before - the selectedCaseId
+      // effect below picks it up and loads its audit trail; no need to
+      // fetch it again here too (M1.27: this was a redundant duplicate GET).
       setSelectedCaseId(result.recoveryCaseId);
-      loadAuditTrail(result.recoveryCaseId);
     } catch (error) {
       setRecoveryErrorText(recoveryErrorMessage(error));
     } finally {
       setRecoveringPaymentId(null);
+    }
+  }
+
+  // M1.25 phase 2: independently re-verifies the action recover() already
+  // executed (e.g. after the operator paid the real Razorpay Payment Link
+  // shown by handleRecover above). Never re-executes - reuses the exact same
+  // result card / refresh sequence as handleRecover so the two phases read
+  // as one continuous flow.
+  async function handleVerify(recoveryCaseId: number) {
+    setVerifyingCaseId(recoveryCaseId);
+    setRecoveryErrorText(null);
+    try {
+      const result = await verifyRecovery(recoveryCaseId);
+      setRecoveryResult(result);
+      await loadDashboard();
+      await loadAtRiskPayments();
+      loadAuditTrail(recoveryCaseId);
+    } catch (error) {
+      setRecoveryErrorText(recoveryErrorMessage(error));
+    } finally {
+      setVerifyingCaseId(null);
+    }
+  }
+
+  // M1.26 Phase 1: pulls real Razorpay Test Mode failed payments into
+  // RecoverSense - read-only against Razorpay, never calls it directly from
+  // here (the backend owns the credentials). Refreshes at-risk/dashboard
+  // afterward so newly-imported payments show up immediately.
+  async function handleSync() {
+    setSyncing(true);
+    setSyncMessage(null);
+    try {
+      const result = await syncRazorpayPayments();
+      setSyncMessage(
+        result.available
+          ? `Imported ${result.imported}, skipped ${result.skipped} already-known payment(s).`
+          : (result.message ?? 'Razorpay is not configured on this server.'),
+      );
+      if (result.available) {
+        await loadAtRiskPayments();
+        await loadDashboard();
+      }
+    } catch {
+      setSyncMessage('Sync failed. Check the backend logs.');
+    } finally {
+      setSyncing(false);
     }
   }
 
@@ -339,36 +730,15 @@ export default function App() {
 
         <div className="nav-title">Workspace</div>
         <div className="nav">
-          <a
-            className={activeView === 'overview' ? 'active' : ''}
-            href="#"
-            onClick={(event) => {
-              event.preventDefault();
-              setActiveView('overview');
-            }}
-          >
-            Overview
-          </a>
-          <a
-            className={activeView === 'at-risk' ? 'active' : ''}
-            href="#"
-            onClick={(event) => {
-              event.preventDefault();
-              setActiveView('at-risk');
-            }}
-          >
-            At-risk payments
-          </a>
-          <span className="disabled">Recovery cases</span>
-          <span className="disabled">Audit trail</span>
-          <span className="disabled">Metrics</span>
+          <NavLink view="overview" label="Overview" activeView={activeView} onSelect={setActiveView} />
+          <NavLink view="at-risk" label="At-risk payments" activeView={activeView} onSelect={setActiveView} />
+          <NavLink view="cases" label="Recovery cases" activeView={activeView} onSelect={setActiveView} />
+          <NavLink view="audit" label="Audit trail" activeView={activeView} onSelect={setActiveView} />
         </div>
 
         <div className="nav-title">System</div>
         <div className="nav">
-          <span className="disabled">Policy rules</span>
-          <span className="disabled">Integrations</span>
-          <span className="disabled">Settings</span>
+          <NavLink view="integrations" label="Integrations" activeView={activeView} onSelect={setActiveView} />
         </div>
 
         <div className="status">
@@ -379,12 +749,8 @@ export default function App() {
 
       <main>
         <div className="topbar">
-          <h1>{activeView === 'at-risk' ? 'At-Risk Payments' : 'Recovery Overview'}</h1>
-          <div className="sub">
-            {activeView === 'at-risk'
-              ? 'Failed payments RecoverSense has not yet recovered - start recovery from here'
-              : 'Live view of revenue at risk and recovery decisions'}
-          </div>
+          <h1>{VIEW_COPY[activeView].title}</h1>
+          <div className="sub">{VIEW_COPY[activeView].subtitle}</div>
         </div>
 
         {loadError && <div className="error-banner">Could not load dashboard data: {loadError}</div>}
@@ -396,10 +762,46 @@ export default function App() {
             setRecoveryResult(null);
             setRecoveryErrorText(null);
           }}
+          onVerify={handleVerify}
+          verifying={verifyingCaseId !== null}
         />
 
         {activeView === 'at-risk' ? (
-          <AtRiskTable payments={atRiskPayments} recoveringPaymentId={recoveringPaymentId} onRecover={handleRecover} />
+          <AtRiskTable
+            payments={atRiskPayments}
+            recoveringPaymentId={recoveringPaymentId}
+            onRecover={handleRecover}
+            onSync={handleSync}
+            syncing={syncing}
+            syncMessage={syncMessage}
+          />
+        ) : activeView === 'integrations' ? (
+          <IntegrationsView />
+        ) : activeView === 'audit' ? (
+          selectedCase ? (
+            <AuditPanel recoveryCase={selectedCase} events={auditEvents} />
+          ) : (
+            <div className="card">
+              <div className="empty-state">Select a recovery case to view its decision trail.</div>
+            </div>
+          )
+        ) : activeView === 'cases' ? (
+          !dashboard ? (
+            !loadError && <div className="empty-state">Loading…</div>
+          ) : (
+            <>
+              <CasesTable
+                cases={dashboard.recentCases}
+                selectedCaseId={selectedCaseId}
+                onSelectCase={setSelectedCaseId}
+                recoveringPaymentId={recoveringPaymentId}
+                onRecover={handleRecover}
+                verifyingCaseId={verifyingCaseId}
+                onVerify={handleVerify}
+              />
+              <CaseDetailSection selectedCase={selectedCase} auditEvents={auditEvents} />
+            </>
+          )
         ) : !dashboard ? (
           !loadError && <div className="empty-state">Loading…</div>
         ) : (
@@ -429,6 +831,21 @@ export default function App() {
                 <div className="metric-label">Policy blocks</div>
                 <div className="metric-value">{dashboard.summary.policyBlocks}</div>
                 <div className="metric-foot">decisions blocked by policy</div>
+              </div>
+              <div className="card">
+                <div className="metric-label">Failed payments</div>
+                <div className="metric-value">{dashboard.summary.failedPaymentsCount}</div>
+                <div className="metric-foot">{dashboard.summary.recoveredCasesCount} recovered</div>
+              </div>
+              <div className="card">
+                <div className="metric-label">Awaiting verification</div>
+                <div className="metric-value">{dashboard.summary.pendingVerificationCount}</div>
+                <div className="metric-foot">executed, not yet verified</div>
+              </div>
+              <div className="card">
+                <div className="metric-label">Execution issues</div>
+                <div className="metric-value">{dashboard.summary.executionIssuesCount}</div>
+                <div className="metric-foot">failed or unavailable executions</div>
               </div>
             </section>
 
@@ -463,86 +880,17 @@ export default function App() {
               </div>
             </section>
 
-            <section className="card table-card">
-              <div className="table-head">
-                <div className="card-title">Recent recovery cases</div>
-                <div className="muted">Showing {dashboard.recentCases.length}</div>
-              </div>
-              {dashboard.recentCases.length === 0 ? (
-                <div className="empty-state">No recovery cases yet.</div>
-              ) : (
-                <div className="table-scroll">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Payment</th>
-                        <th>Amount</th>
-                        <th>Failure</th>
-                        <th>AI recommendation</th>
-                        <th>Policy</th>
-                        <th>Execution</th>
-                        <th>Verification</th>
-                        <th>Case</th>
-                        <th>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {dashboard.recentCases.map((row) => (
-                        <tr
-                          key={row.recoveryCaseId}
-                          className={row.recoveryCaseId === selectedCaseId ? 'selected' : ''}
-                          onClick={() => setSelectedCaseId(row.recoveryCaseId)}
-                        >
-                          <td>
-                            <b>{row.externalPaymentId}</b>
-                          </td>
-                          <td>{formatCurrency(row.amount, row.currency)}</td>
-                          <td>{row.failureReason ?? '—'}</td>
-                          <td>{strategyLabel(row.strategy)}</td>
-                          <td>
-                            <Pill value={row.policyResult} tones={POLICY_TONES} />
-                          </td>
-                          <td>
-                            <Pill value={row.executionStatus} tones={EXECUTION_TONES} />
-                          </td>
-                          <td>
-                            <Pill value={row.verificationStatus} tones={VERIFICATION_TONES} />
-                          </td>
-                          <td>
-                            <Pill value={row.caseStatus} tones={CASE_STATUS_TONES} />
-                          </td>
-                          <td>
-                            <button
-                              type="button"
-                              className="recover-btn"
-                              disabled={recoveringPaymentId !== null}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                handleRecover(row.paymentId);
-                              }}
-                            >
-                              {recoveringPaymentId === row.paymentId ? 'Recovering…' : 'Recover'}
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </section>
+            <CasesTable
+              cases={dashboard.recentCases}
+              selectedCaseId={selectedCaseId}
+              onSelectCase={setSelectedCaseId}
+              recoveringPaymentId={recoveringPaymentId}
+              onRecover={handleRecover}
+              verifyingCaseId={verifyingCaseId}
+              onVerify={handleVerify}
+            />
 
-            <section className="bottom">
-              {selectedCase ? (
-                <DecisionPanel recoveryCase={selectedCase} />
-              ) : (
-                <div className="decision">
-                  <div className="eyebrow">No case selected</div>
-                  <p>Select a row from the table above to see its decision detail.</p>
-                </div>
-              )}
-              <AuditPanel recoveryCase={selectedCase} events={auditEvents} />
-            </section>
+            <CaseDetailSection selectedCase={selectedCase} auditEvents={auditEvents} />
           </>
         )}
       </main>

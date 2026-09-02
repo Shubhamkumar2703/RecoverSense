@@ -14,6 +14,17 @@ public enum RecoveryOutcome {
     EXECUTION_UNAVAILABLE,
     /** Execution was attempted through a real provider and failed. */
     EXECUTION_FAILED,
+    /**
+     * M1.25: execution succeeded (e.g. a real Payment Link was created) but
+     * verification has not been attempted yet - some actions require an
+     * out-of-band step (a human paying a hosted link) before the result can
+     * honestly be checked. Verification must be triggered separately via
+     * {@link RecoveryOrchestrationService#verify}; recover() never
+     * auto-verifies, because a single-shot verification attempted before
+     * that out-of-band step completes would fail closed permanently (see
+     * RecoveryActionVerificationService's one-shot terminal semantics).
+     */
+    EXECUTED_AWAITING_VERIFICATION,
     /** No verification provider is wired up yet (NotImplementedRecoveryActionVerifier). */
     VERIFICATION_UNAVAILABLE,
     /** Execution succeeded but re-fetched state did not confirm recovery. */

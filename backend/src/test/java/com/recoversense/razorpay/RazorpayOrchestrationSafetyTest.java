@@ -102,7 +102,8 @@ class RazorpayOrchestrationSafetyTest {
                 recoveryActionRepository, auditEventRepository, new RazorpayRecoveryActionVerifier(neverCalledClient));
 
         RecoveryOrchestrationService orchestration = new RecoveryOrchestrationService(
-                diagnosisService, lifecycleService, executionService, verificationService);
+                diagnosisService, lifecycleService, executionService, verificationService,
+                recoveryCaseRepository, recoveryActionRepository);
 
         RecoveryOrchestrationResult result = orchestration.recover(payment.getId());
 

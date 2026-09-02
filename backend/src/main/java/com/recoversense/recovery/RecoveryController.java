@@ -1,11 +1,15 @@
 package com.recoversense.recovery;
 
+import com.recoversense.service.InvalidActionTransitionException;
 import com.recoversense.service.InvalidPaymentStateException;
 import com.recoversense.service.PaymentAlreadyRecoveredException;
 import com.recoversense.service.PaymentNotFoundException;
+import com.recoversense.service.RecoveryActionNotFoundException;
+import com.recoversense.service.RecoveryCaseNotFoundException;
 import com.recoversense.service.RecoveryOrchestrationResult;
 import com.recoversense.service.RecoveryOrchestrationService;
 import com.recoversense.service.RecoveryOutcome;
+import com.recoversense.service.RecoveryVerificationResult;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -49,10 +53,25 @@ public class RecoveryController {
                 .body(RecoveryResponse.from(paymentId, result));
     }
 
+    /**
+     * M1.25 phase 2: independently re-verifies the action recover() already
+     * executed for this case. Never creates a case/decision/action and never
+     * calls an executor - see RecoveryOrchestrationService#verify. Keyed by
+     * recoveryCaseId (not actionId) because that is the identifier the
+     * initial recover() response already gave the caller.
+     */
+    @PostMapping("/cases/{recoveryCaseId}/verify")
+    public ResponseEntity<RecoveryResponse> verify(@PathVariable Long recoveryCaseId) {
+        RecoveryVerificationResult result = recoveryOrchestrationService.verify(recoveryCaseId);
+        Long paymentId = result.recoveryCase().getPayment().getId();
+        return ResponseEntity.status(statusFor(result.outcome()))
+                .body(RecoveryResponse.fromVerification(paymentId, result));
+    }
+
     private HttpStatus statusFor(RecoveryOutcome outcome) {
         return switch (outcome) {
             case EXECUTION_UNAVAILABLE, VERIFICATION_UNAVAILABLE -> HttpStatus.SERVICE_UNAVAILABLE;
-            case RECOVERED, BLOCKED, EXECUTION_FAILED, VERIFICATION_FAILED -> HttpStatus.OK;
+            case RECOVERED, BLOCKED, EXECUTION_FAILED, VERIFICATION_FAILED, EXECUTED_AWAITING_VERIFICATION -> HttpStatus.OK;
         };
     }
 
@@ -74,6 +93,34 @@ public class RecoveryController {
      */
     @ExceptionHandler(PaymentAlreadyRecoveredException.class)
     public ResponseEntity<ErrorResponse> handlePaymentAlreadyRecovered(PaymentAlreadyRecoveredException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(new ErrorResponse(ex.getMessage()));
+    }
+
+    /**
+     * M1.25: the caseId path variable on POST /cases/{recoveryCaseId}/verify
+     * does not identify a case at all.
+     */
+    @ExceptionHandler(RecoveryCaseNotFoundException.class)
+    public ResponseEntity<ErrorResponse> handleRecoveryCaseNotFound(RecoveryCaseNotFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(new ErrorResponse(ex.getMessage()));
+    }
+
+    /**
+     * M1.25: the case has no recovery action to verify at all (e.g. policy
+     * blocked it, so nothing was ever created).
+     */
+    @ExceptionHandler(RecoveryActionNotFoundException.class)
+    public ResponseEntity<ErrorResponse> handleRecoveryActionNotFound(RecoveryActionNotFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(new ErrorResponse(ex.getMessage()));
+    }
+
+    /**
+     * M1.25: verify() was called for an action that isn't in a verifiable
+     * state (e.g. never reached EXECUTED) - same "not currently in a state
+     * that allows this operation" family as InvalidPaymentStateException.
+     */
+    @ExceptionHandler(InvalidActionTransitionException.class)
+    public ResponseEntity<ErrorResponse> handleInvalidActionTransition(InvalidActionTransitionException ex) {
         return ResponseEntity.status(HttpStatus.CONFLICT).body(new ErrorResponse(ex.getMessage()));
     }
 

@@ -34,6 +34,22 @@ class DiagnosisEngineTest {
         assertEquals(DiagnosisEngine.HIGH_CONFIDENCE, result.confidence());
     }
 
+    /**
+     * M1.25: reason-text evidence for REPEATED_FAILURE, independent of
+     * retry_count - mirrors how MANDATE_INVALID/INSUFFICIENT_FUNDS are
+     * already reached purely from reason text. Not specific to any one
+     * payment id: this must hold for any failureReason containing both
+     * words.
+     */
+    @Test
+    void repeatedFailureReasonText_diagnosesRepeatedFailure_regardlessOfRetryCount() {
+        DiagnosisResult result = engine.diagnose(
+                new DiagnosisContext("Repeated payment failure - card declined multiple times", "active", CustomerStatus.ACTIVE, 0));
+
+        assertEquals("REPEATED_FAILURE", result.diagnosisCategory());
+        assertEquals(DiagnosisEngine.HIGH_CONFIDENCE, result.confidence());
+    }
+
     @Test
     void retryCountAtThreshold_diagnosesRepeatedFailure() {
         DiagnosisResult result = engine.diagnose(

@@ -26,6 +26,7 @@ import com.recoversense.service.RecoveryOrchestrationResult;
 import com.recoversense.service.RecoveryOrchestrationService;
 import com.recoversense.service.RecoveryOutcome;
 import com.recoversense.service.RecoveryPolicyService;
+import com.recoversense.service.RecoveryVerificationResult;
 import com.recoversense.settlement.SettlementState;
 import com.recoversense.settlement.SimulatedSettlementVerifier;
 import org.junit.jupiter.api.Test;
@@ -115,7 +116,8 @@ class RazorpayPaymentLinkRealE2ETest {
         RecoveryActionVerificationService verificationService = new RecoveryActionVerificationService(
                 recoveryActionRepository, auditEventRepository, new RazorpayRecoveryActionVerifier(realClient));
 
-        return new RecoveryOrchestrationService(realDiagnosisService, lifecycleService, executionService, verificationService);
+        return new RecoveryOrchestrationService(realDiagnosisService, lifecycleService, executionService, verificationService,
+                recoveryCaseRepository, recoveryActionRepository);
     }
 
     /**
@@ -152,22 +154,30 @@ class RazorpayPaymentLinkRealE2ETest {
         assertEquals(PolicyResult.ALLOWED, result.policyDecision().result(),
                 "PAYMENT_LINK must not be blocked by WAIT_RETRY's retry limit: " + result.policyDecision().failedReasons());
 
-        // A real payment link was created (execution succeeded) but nobody
-        // paid it in this automated run, so verification must NOT report
-        // recovery - this is the honest, expected real-provider outcome,
-        // not a test failure.
-        assertEquals(RecoveryOutcome.VERIFICATION_FAILED, result.outcome());
+        // M1.25: recover() only executes now - a real payment link was
+        // created but verification is a deliberate second phase, never
+        // automatic (see RecoveryOutcome.EXECUTED_AWAITING_VERIFICATION).
+        assertEquals(RecoveryOutcome.EXECUTED_AWAITING_VERIFICATION, result.outcome());
         assertEquals(RecoveryCaseStatus.OPEN, result.recoveryCase().getStatus());
 
         RecoveryAction action = result.action().orElseThrow();
         assertEquals(ExecutionStatus.EXECUTED, action.getExecutionStatus());
-        assertEquals(VerificationStatus.FAILED, action.getVerificationStatus());
+        assertEquals(VerificationStatus.UNVERIFIED, action.getVerificationStatus());
         assertNotNull(action.getExternalReference(), "a real Razorpay payment_link id must be persisted");
         assertTrue(action.getExternalReference().startsWith("plink_"), "external reference must be a real Razorpay id");
 
         // Independent re-fetch, not trust in the create() response.
         RazorpayPaymentLink fetched = RealRazorpayTestSupport.realClient().fetchById(action.getExternalReference());
         assertFalse(fetched.status() == RazorpayPaymentLinkStatus.PAID, "the link genuinely was not paid");
+
+        // Phase 2: nobody paid the link in this automated run, so verify()
+        // must NOT report recovery - the honest, expected real-provider
+        // outcome, not a test failure. Proves the new endpoint against a
+        // genuinely unpaid real Razorpay Payment Link (M1.25 test item 5).
+        RecoveryVerificationResult verifyResult = orchestration.verify(result.recoveryCase().getId());
+        assertEquals(RecoveryOutcome.VERIFICATION_FAILED, verifyResult.outcome());
+        assertEquals(RecoveryCaseStatus.OPEN, verifyResult.recoveryCase().getStatus());
+        assertEquals(VerificationStatus.FAILED, verifyResult.action().getVerificationStatus());
 
         List<String> eventTypes = auditEventRepository.findAll().stream()
                 .filter(e -> e.getRecoveryCase().getId().equals(result.recoveryCase().getId()))

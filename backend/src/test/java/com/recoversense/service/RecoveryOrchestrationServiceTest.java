@@ -89,7 +89,8 @@ class RecoveryOrchestrationServiceTest {
                 new RecoveryActionExecutionService(recoveryActionRepository, auditEventRepository, executor);
         RecoveryActionVerificationService verificationService =
                 new RecoveryActionVerificationService(recoveryActionRepository, auditEventRepository, verifier);
-        return new RecoveryOrchestrationService(diagnosisService, lifecycleService, executionService, verificationService);
+        return new RecoveryOrchestrationService(diagnosisService, lifecycleService, executionService, verificationService,
+                recoveryCaseRepository, recoveryActionRepository);
     }
 
     private RecoveryActionExecutor neverCalledExecutor() {
@@ -106,11 +107,18 @@ class RecoveryOrchestrationServiceTest {
         RecoveryOrchestrationService orchestration = orchestrationServiceWith(SettlementState.NOT_SETTLED, "pay_happy",
                 a -> ExecutionStatus.EXECUTED, a -> VerificationStatus.VERIFIED);
 
-        RecoveryOrchestrationResult result = orchestration.recover(payment.getId());
+        // M1.25: recover() only executes - it never auto-verifies (see
+        // RecoveryOutcome.EXECUTED_AWAITING_VERIFICATION) - so reaching
+        // RECOVERED now takes an explicit second verify() call.
+        RecoveryOrchestrationResult recoverResult = orchestration.recover(payment.getId());
+        assertEquals(RecoveryOutcome.EXECUTED_AWAITING_VERIFICATION, recoverResult.outcome());
+        assertEquals(RecoveryCaseStatus.OPEN, recoverResult.recoveryCase().getStatus());
+
+        RecoveryVerificationResult result = orchestration.verify(recoverResult.recoveryCase().getId());
 
         assertEquals(RecoveryOutcome.RECOVERED, result.outcome());
         assertEquals(RecoveryCaseStatus.RECOVERED, result.recoveryCase().getStatus());
-        RecoveryAction action = result.action().orElseThrow();
+        RecoveryAction action = result.action();
         assertEquals(ExecutionStatus.EXECUTED, action.getExecutionStatus());
         assertEquals(VerificationStatus.VERIFIED, action.getVerificationStatus());
 
@@ -159,12 +167,72 @@ class RecoveryOrchestrationServiceTest {
         RecoveryOrchestrationService orchestration = orchestrationServiceWith(SettlementState.NOT_SETTLED, "pay_verify_fail",
                 a -> ExecutionStatus.EXECUTED, a -> VerificationStatus.FAILED);
 
-        RecoveryOrchestrationResult result = orchestration.recover(payment.getId());
+        RecoveryOrchestrationResult recoverResult = orchestration.recover(payment.getId());
+        assertEquals(RecoveryOutcome.EXECUTED_AWAITING_VERIFICATION, recoverResult.outcome());
+
+        RecoveryVerificationResult result = orchestration.verify(recoverResult.recoveryCase().getId());
 
         assertEquals(RecoveryOutcome.VERIFICATION_FAILED, result.outcome());
         assertEquals(RecoveryCaseStatus.OPEN, result.recoveryCase().getStatus());
-        assertEquals(ExecutionStatus.EXECUTED, result.action().orElseThrow().getExecutionStatus());
-        assertEquals(VerificationStatus.FAILED, result.action().orElseThrow().getVerificationStatus());
+        assertEquals(ExecutionStatus.EXECUTED, result.action().getExecutionStatus());
+        assertEquals(VerificationStatus.FAILED, result.action().getVerificationStatus());
+    }
+
+    /**
+     * M1.26: FAILED is not terminal - a real Payment Link genuinely not yet
+     * paid must be re-verifiable once the customer actually pays, without
+     * ever touching the executor (no second Payment Link) and without ever
+     * fabricating VERIFIED before the provider actually confirms it. Proves
+     * this is a real re-attempt (not a cached echo) by using a verifier that
+     * only reports VERIFIED from its second call onward.
+     */
+    @Test
+    void verifyAfterFailure_canSucceedOnceTheProviderConfirmsPayment() {
+        Payment payment = seedFailedPayment("pay_verify_fail_then_paid", "mandate_revoked");
+        java.util.concurrent.atomic.AtomicInteger callCount = new java.util.concurrent.atomic.AtomicInteger(0);
+        RecoveryOrchestrationService orchestration = orchestrationServiceWith(SettlementState.NOT_SETTLED, "pay_verify_fail_then_paid",
+                a -> ExecutionStatus.EXECUTED,
+                a -> callCount.incrementAndGet() == 1 ? VerificationStatus.FAILED : VerificationStatus.VERIFIED);
+
+        RecoveryOrchestrationResult recoverResult = orchestration.recover(payment.getId());
+        Long caseId = recoverResult.recoveryCase().getId();
+
+        RecoveryVerificationResult first = orchestration.verify(caseId);
+        assertEquals(RecoveryOutcome.VERIFICATION_FAILED, first.outcome());
+        assertEquals(RecoveryCaseStatus.OPEN, first.recoveryCase().getStatus());
+
+        RecoveryVerificationResult second = orchestration.verify(caseId);
+        assertEquals(RecoveryOutcome.RECOVERED, second.outcome());
+        assertEquals(RecoveryCaseStatus.RECOVERED, second.recoveryCase().getStatus());
+        assertEquals(2, callCount.get(), "the second verify() call must genuinely re-invoke the verifier, not echo a cached result");
+    }
+
+    /**
+     * M1.25 duplicate-safety, the successful side: once VERIFIED, a repeated
+     * verify() call returns the already-RECOVERED state instead of
+     * re-attempting verification or re-transitioning the case.
+     */
+    @Test
+    void repeatedVerifyAfterSuccess_returnsRecoveredWithoutReattempting() {
+        Payment payment = seedFailedPayment("pay_verify_success_repeat", "mandate_revoked");
+        RecoveryOrchestrationService orchestration = orchestrationServiceWith(SettlementState.NOT_SETTLED, "pay_verify_success_repeat",
+                a -> ExecutionStatus.EXECUTED, a -> VerificationStatus.VERIFIED);
+
+        RecoveryOrchestrationResult recoverResult = orchestration.recover(payment.getId());
+        Long caseId = recoverResult.recoveryCase().getId();
+
+        RecoveryVerificationResult first = orchestration.verify(caseId);
+        assertEquals(RecoveryOutcome.RECOVERED, first.outcome());
+
+        RecoveryVerificationResult second = orchestration.verify(caseId);
+        assertEquals(RecoveryOutcome.RECOVERED, second.outcome());
+        assertEquals(RecoveryCaseStatus.RECOVERED, second.recoveryCase().getStatus());
+
+        long caseStatusChangedEvents = auditEventRepository.findAll().stream()
+                .filter(e -> e.getRecoveryCase().getId().equals(caseId))
+                .filter(e -> e.getEventType().equals("CASE_STATUS_CHANGED"))
+                .count();
+        assertEquals(1, caseStatusChangedEvents, "case must transition to RECOVERED exactly once, not on every verify call");
     }
 
     @Test
@@ -199,7 +267,9 @@ class RecoveryOrchestrationServiceTest {
         RecoveryOrchestrationService firstAttemptOrchestration = orchestrationServiceWith(SettlementState.NOT_SETTLED,
                 "pay_sequential_duplicate", a -> ExecutionStatus.EXECUTED, a -> VerificationStatus.VERIFIED);
 
-        RecoveryOrchestrationResult firstResult = firstAttemptOrchestration.recover(payment.getId());
+        RecoveryOrchestrationResult firstRecoverResult = firstAttemptOrchestration.recover(payment.getId());
+        assertEquals(RecoveryOutcome.EXECUTED_AWAITING_VERIFICATION, firstRecoverResult.outcome());
+        RecoveryVerificationResult firstResult = firstAttemptOrchestration.verify(firstRecoverResult.recoveryCase().getId());
         assertEquals(RecoveryOutcome.RECOVERED, firstResult.outcome());
 
         RecoveryOrchestrationService secondAttemptOrchestration = orchestrationServiceWith(SettlementState.NOT_SETTLED,

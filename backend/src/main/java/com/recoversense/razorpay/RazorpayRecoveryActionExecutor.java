@@ -72,6 +72,9 @@ public class RazorpayRecoveryActionExecutor implements RecoveryActionExecutor {
         }
 
         action.setExternalReference(link.id());
+        // M1.25: transient, request-scoped only (see RecoveryAction.providerUrl) -
+        // never persisted, never reconstructed from the id later.
+        action.setProviderUrl(link.shortUrl());
         return ExecutionStatus.EXECUTED;
     }
 

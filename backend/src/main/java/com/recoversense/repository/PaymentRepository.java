@@ -15,6 +15,8 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
 
     Optional<Payment> findByExternalPaymentId(String externalPaymentId);
 
+    long countByStatus(PaymentStatus status);
+
     /**
      * At-risk = failedStatus payments with no RecoveryCase in any of
      * activeStatuses (see M1.22 ADR-012 / docs/DECISIONS.md: OPEN means

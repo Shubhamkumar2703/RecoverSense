@@ -48,6 +48,18 @@ public class RazorpayAutoConfiguration {
         return new HttpRazorpayPaymentLinkClient(razorpayRestClient);
     }
 
+    /**
+     * M1.26: read-only Razorpay payment ingestion (see RazorpayPaymentSyncService).
+     * Same @Primary-over-coexistence pattern as every other bean here -
+     * NotConfiguredRazorpayPaymentClient stays registered (harmlessly unused)
+     * rather than being conditioned out.
+     */
+    @Bean
+    @Primary
+    RazorpayPaymentClient razorpayPaymentClient(RestClient razorpayRestClient) {
+        return new HttpRazorpayPaymentClient(razorpayRestClient);
+    }
+
     @Bean
     @Primary
     RecoveryActionExecutor razorpayRecoveryActionExecutor(RazorpayPaymentLinkClient razorpayPaymentLinkClient) {

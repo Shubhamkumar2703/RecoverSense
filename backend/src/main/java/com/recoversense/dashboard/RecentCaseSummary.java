@@ -10,6 +10,11 @@ import java.time.Instant;
  * policyResult is "BLOCKED" (with execution/verification left null) when the
  * decision exists but policy blocked it - no RecoveryAction is ever created
  * in that case (see RecoveryActionService.createIfAllowed).
+ * <p>
+ * M1.27: diagnosisSource ("CLAUDE"/"SIMULATED"/null) - see
+ * DiagnosisSource.parsePrefix - so the UI can label a diagnosis truthfully
+ * instead of leaving the provider unstated. Never inferred beyond what
+ * DiagnosisService actually recorded.
  */
 public record RecentCaseSummary(
         Long recoveryCaseId,
@@ -25,6 +30,8 @@ public record RecentCaseSummary(
         String executionStatus,
         String verificationStatus,
         String caseStatus,
-        Instant openedAt
+        Instant openedAt,
+        String dataSource,
+        String diagnosisSource
 ) {
 }

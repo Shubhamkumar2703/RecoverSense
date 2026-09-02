@@ -5,6 +5,10 @@ export interface DashboardSummary {
   recoveryRate: number;
   verifiedActions: number;
   policyBlocks: number;
+  failedPaymentsCount: number;
+  recoveredCasesCount: number;
+  pendingVerificationCount: number;
+  executionIssuesCount: number;
 }
 
 export interface StrategyMixEntry {
@@ -27,6 +31,13 @@ export interface RecentCaseSummary {
   verificationStatus: string | null;
   caseStatus: string;
   openedAt: string;
+  // M1.26: "REAL" (Razorpay-synced) or "DEMO" (DemoDataSeeder) - see
+  // DashboardMetricsService.classifyDataSource. Never hide this distinction.
+  dataSource: string;
+  // M1.27: "CLAUDE" or "SIMULATED" (deterministic), or null if not
+  // recorded - see DiagnosisSource.parsePrefix. Never labeled "Claude"
+  // unless Claude was actually invoked.
+  diagnosisSource: string | null;
 }
 
 export interface DashboardResponse {
@@ -49,9 +60,18 @@ export interface AtRiskPaymentSummary {
   currency: string;
   failureReason: string | null;
   failedAt: string;
+  dataSource: string;
 }
 
-// Mirrors com.recoversense.recovery.RecoveryResponse exactly (M1.20).
+// Mirrors com.recoversense.razorpay.RazorpaySyncResponse exactly (M1.26).
+export interface RazorpaySyncResponse {
+  available: boolean;
+  imported: number;
+  skipped: number;
+  message: string | null;
+}
+
+// Mirrors com.recoversense.recovery.RecoveryResponse exactly (M1.20, +providerUrl M1.25).
 export interface RecoveryResponse {
   paymentId: number;
   recoveryCaseId: number;
@@ -63,6 +83,13 @@ export interface RecoveryResponse {
   verificationStatus: string | null;
   externalReference: string | null;
   outcome: string;
+  // Real Razorpay hosted Payment Link URL - only ever present on the
+  // recover() response that just executed a fresh PAYMENT_LINK action
+  // (RecoveryAction.providerUrl is request-scoped, never persisted), so a
+  // later verify() response never carries it.
+  providerUrl: string | null;
+  // M1.27: "CLAUDE" or "SIMULATED", or null - same rule as RecentCaseSummary.
+  diagnosisSource: string | null;
 }
 
 // Carries the HTTP status alongside the message so callers can distinguish
@@ -100,6 +127,16 @@ export function fetchAtRiskPayments(): Promise<AtRiskPaymentSummary[]> {
   return getJson<AtRiskPaymentSummary[]>('/api/dashboard/payments/at-risk');
 }
 
+// M1.26: pulls real Razorpay Test Mode failed payments into RecoverSense's
+// own Payment table (read-only against Razorpay, idempotent locally) - the
+// frontend never talks to Razorpay directly. 503 with available:false means
+// Razorpay isn't configured on the server, not an error to throw - the
+// caller shows that message rather than a generic failure.
+export async function syncRazorpayPayments(): Promise<RazorpaySyncResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/dashboard/payments/sync`, { method: 'POST' });
+  return response.json() as Promise<RazorpaySyncResponse>;
+}
+
 // RecoveryController returns 200 for every completed pipeline outcome
 // (RECOVERED/BLOCKED/EXECUTION_FAILED/VERIFICATION_FAILED) and 503 for
 // EXECUTION_UNAVAILABLE/VERIFICATION_UNAVAILABLE - both still carry a full
@@ -114,6 +151,21 @@ export async function recoverPayment(paymentId: number): Promise<RecoveryRespons
   if (!response.ok && response.status !== 503) {
     const body = (await response.json().catch(() => null)) as { message?: string } | null;
     throw new RecoveryApiError(response.status, body?.message ?? `recover failed with status ${response.status}`);
+  }
+  return response.json() as Promise<RecoveryResponse>;
+}
+
+// M1.25 phase 2: independently re-verifies the action recover() already
+// executed for this case (e.g. after a human pays a real Razorpay Payment
+// Link) - never re-executes, never creates another action. Same response
+// shape/status handling as recoverPayment: 503 for VERIFICATION_UNAVAILABLE
+// still carries a full RecoveryResponse, and a genuine guard rejection
+// (404/409) carries an ErrorResponse and throws.
+export async function verifyRecovery(recoveryCaseId: number): Promise<RecoveryResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/recovery/cases/${recoveryCaseId}/verify`, { method: 'POST' });
+  if (!response.ok && response.status !== 503) {
+    const body = (await response.json().catch(() => null)) as { message?: string } | null;
+    throw new RecoveryApiError(response.status, body?.message ?? `verify failed with status ${response.status}`);
   }
   return response.json() as Promise<RecoveryResponse>;
 }

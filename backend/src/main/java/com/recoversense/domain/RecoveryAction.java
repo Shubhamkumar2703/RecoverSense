@@ -11,6 +11,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
+import jakarta.persistence.Transient;
 
 import java.time.Instant;
 
@@ -56,6 +57,19 @@ public class RecoveryAction extends Timestamped {
 
     @Column(name = "external_reference")
     private String externalReference;
+
+    /**
+     * M1.25: the real hosted Payment Link URL (Razorpay's short_url),
+     * request-scoped only - never persisted, never queried. The provider
+     * only returns it from create()/fetchById() responses; RecoverSense has
+     * no reason to store it since the operator needs it exactly once, in the
+     * same HTTP response that created the link (see RecoveryController /
+     * RecoveryResponse). Left null for every action that isn't a freshly
+     * created PAYMENT_LINK (including this same action on any later verify
+     * pass, since the executor is never called again for it).
+     */
+    @Transient
+    private String providerUrl;
 
     protected RecoveryAction() {
     }
@@ -125,5 +139,13 @@ public class RecoveryAction extends Timestamped {
 
     public void setExternalReference(String externalReference) {
         this.externalReference = externalReference;
+    }
+
+    public String getProviderUrl() {
+        return providerUrl;
+    }
+
+    public void setProviderUrl(String providerUrl) {
+        this.providerUrl = providerUrl;
     }
 }

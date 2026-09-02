@@ -16,7 +16,13 @@ import java.time.Instant;
  * Verification boundary for a RecoveryAction, kept fully independent of
  * execution: verification is never inferred from executionStatus alone,
  * only gated by it (must be EXECUTED first). Re-verifying an
- * already-VERIFIED/FAILED action is rejected - those are terminal.
+ * already-VERIFIED action is rejected - that is the sole terminal state.
+ * <p>
+ * M1.26: a FAILED verification may be re-attempted (e.g. a real Razorpay
+ * Payment Link genuinely was not yet paid when first checked) - this never
+ * fabricates anything, since each attempt is still an independent re-fetch
+ * through the same {@link RecoveryActionVerifier}; it only changes when a
+ * caller is allowed to ask again. Only VERIFIED is a one-way door.
  * <p>
  * No Razorpay/HTTP client is wired here; the only current
  * {@link RecoveryActionVerifier} throws {@link UnsupportedOperationException},
@@ -56,9 +62,9 @@ public class RecoveryActionVerificationService {
             throw new InvalidActionTransitionException(
                     "Cannot verify RecoveryAction " + recoveryActionId + ": executionStatus is " + action.getExecutionStatus() + ", expected EXECUTED");
         }
-        if (action.getVerificationStatus() != VerificationStatus.UNVERIFIED) {
+        if (action.getVerificationStatus() == VerificationStatus.VERIFIED) {
             throw new InvalidActionTransitionException(
-                    "Cannot verify RecoveryAction " + recoveryActionId + ": verificationStatus is " + action.getVerificationStatus() + ", expected UNVERIFIED");
+                    "Cannot verify RecoveryAction " + recoveryActionId + ": verificationStatus is already VERIFIED");
         }
 
         VerificationStatus outcome;

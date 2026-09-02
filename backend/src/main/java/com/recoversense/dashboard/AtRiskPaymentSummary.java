@@ -9,6 +9,10 @@ import java.time.Instant;
  * only what the frontend needs to show the payment and let the operator
  * trigger recovery on it - no customer PII beyond what RecentCaseSummary
  * already exposes, no provider details.
+ * <p>
+ * M1.26: dataSource distinguishes real Razorpay-synced data ("REAL") from
+ * DemoDataSeeder rows ("DEMO") - see DashboardMetricsService.classifyDataSource.
+ * A derived, display-only label; never persisted, never a schema change.
  */
 public record AtRiskPaymentSummary(
         Long paymentId,
@@ -16,6 +20,7 @@ public record AtRiskPaymentSummary(
         BigDecimal amount,
         String currency,
         String failureReason,
-        Instant failedAt
+        Instant failedAt,
+        String dataSource
 ) {
 }

@@ -1,5 +1,7 @@
 package com.recoversense.dashboard;
 
+import com.recoversense.diagnosis.DiagnosisSource;
+import com.recoversense.domain.ExecutionStatus;
 import com.recoversense.domain.PolicyResult;
 import com.recoversense.domain.Payment;
 import com.recoversense.domain.PaymentStatus;
@@ -31,8 +33,13 @@ import java.util.Optional;
 public class DashboardMetricsService {
 
     private static final String POLICY_BLOCK_EVENT_TYPE = "ACTION_NOT_CREATED";
+    private static final String EXECUTION_UNAVAILABLE_EVENT_TYPE = "ACTION_EXECUTION_UNAVAILABLE";
     private static final int AT_RISK_LIMIT = 20;
     private static final List<RecoveryCaseStatus> ACTIVE_CASE_STATUSES = List.of(RecoveryCaseStatus.OPEN, RecoveryCaseStatus.RECOVERED);
+    // M1.26: DemoDataSeeder's ids are fixed, well-known constants ("pay_demo_...");
+    // a real Razorpay payment id is provider-generated and can never collide
+    // with this prefix - see DemoDataSeeder/DemoSettlementVerifier.
+    private static final String DEMO_SEEDED_ID_PREFIX = "pay_demo_";
 
     private final RecoveryCaseRepository recoveryCaseRepository;
     private final RecoveryActionRepository recoveryActionRepository;
@@ -80,7 +87,8 @@ public class DashboardMetricsService {
                         payment.getAmount(),
                         payment.getCurrency(),
                         payment.getFailureReason(),
-                        payment.getFailedAt()))
+                        payment.getFailedAt(),
+                        classifyDataSource(payment.getExternalPaymentId())))
                 .toList();
     }
 
@@ -92,7 +100,22 @@ public class DashboardMetricsService {
                 : recoveredRevenue.divide(revenueAtRisk, 4, RoundingMode.HALF_UP);
         long verifiedActions = recoveryActionRepository.countByVerificationStatus(VerificationStatus.VERIFIED);
         long policyBlocks = auditEventRepository.countByEventType(POLICY_BLOCK_EVENT_TYPE);
-        return new DashboardSummary(revenueAtRisk, recoveredRevenue, recoveryRate, verifiedActions, policyBlocks);
+        long failedPaymentsCount = paymentRepository.countByStatus(PaymentStatus.FAILED);
+        long recoveredCasesCount = recoveryCaseRepository.countByStatus(RecoveryCaseStatus.RECOVERED);
+        long pendingVerificationCount = recoveryActionRepository
+                .countByExecutionStatusAndVerificationStatus(ExecutionStatus.EXECUTED, VerificationStatus.UNVERIFIED);
+        long executionIssuesCount = recoveryActionRepository.countByExecutionStatus(ExecutionStatus.FAILED)
+                + auditEventRepository.countByEventType(EXECUTION_UNAVAILABLE_EVENT_TYPE);
+        return new DashboardSummary(revenueAtRisk, recoveredRevenue, recoveryRate, verifiedActions, policyBlocks,
+                failedPaymentsCount, recoveredCasesCount, pendingVerificationCount, executionIssuesCount);
+    }
+
+    /**
+     * M1.26: display-only classification, never persisted - see
+     * AtRiskPaymentSummary/RecentCaseSummary javadoc.
+     */
+    private String classifyDataSource(String externalPaymentId) {
+        return externalPaymentId != null && externalPaymentId.startsWith(DEMO_SEEDED_ID_PREFIX) ? "DEMO" : "REAL";
     }
 
     private List<StrategyMixEntry> buildStrategyMix() {
@@ -118,12 +141,15 @@ public class DashboardMetricsService {
         String policyResult = null;
         String executionStatus = null;
         String verificationStatus = null;
+        String diagnosisSource = null;
 
         if (latestDecision.isPresent()) {
             RecoveryDecision decision = latestDecision.get();
             diagnosisCategory = decision.getDiagnosisCategory();
             diagnosisConfidence = decision.getDiagnosisConfidence();
             strategy = decision.getStrategy();
+            DiagnosisSource source = DiagnosisSource.parsePrefix(decision.getDiagnosisRaw());
+            diagnosisSource = source == null ? null : source.name();
 
             List<RecoveryAction> actions = recoveryActionRepository
                     .findByRecoveryDecisionAndActionType(decision, decision.getStrategy());
@@ -151,7 +177,9 @@ public class DashboardMetricsService {
                 executionStatus,
                 verificationStatus,
                 recoveryCase.getStatus().name(),
-                recoveryCase.getOpenedAt()
+                recoveryCase.getOpenedAt(),
+                classifyDataSource(payment.getExternalPaymentId()),
+                diagnosisSource
         );
     }
 }

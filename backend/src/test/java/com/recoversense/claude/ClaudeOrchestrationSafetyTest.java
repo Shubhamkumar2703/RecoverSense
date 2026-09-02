@@ -86,7 +86,8 @@ class ClaudeOrchestrationSafetyTest {
         RecoveryActionVerificationService verificationService = new RecoveryActionVerificationService(
                 recoveryActionRepository, auditEventRepository,
                 action -> { throw new AssertionError("verifier must not be called"); });
-        return new RecoveryOrchestrationService(diagnosisService, lifecycleService, executionService, verificationService);
+        return new RecoveryOrchestrationService(diagnosisService, lifecycleService, executionService, verificationService,
+                recoveryCaseRepository, recoveryActionRepository);
     }
 
     @Test

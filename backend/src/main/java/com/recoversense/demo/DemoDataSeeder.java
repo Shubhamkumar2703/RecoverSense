@@ -14,9 +14,18 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 
 /**
- * Seeds exactly one deterministic FAILED payment (CLAUDE.md's hero scenario:
- * mandate revoked while the subscription remains active) so the At-Risk
- * Payments screen has something to demo without hand-inserting rows.
+ * Seeds two deterministic FAILED payments so the At-Risk Payments screen has
+ * something to demo without hand-inserting rows:
+ * <ol>
+ *   <li>CLAUDE.md's hero scenario - mandate revoked while the subscription
+ *   remains active - which reaches policy BLOCKED (see
+ *   {@link com.recoversense.demo.DemoSettlementVerifier})</li>
+ *   <li>M1.25's real Razorpay Payment Link scenario ({@link
+ *   DemoSettlementVerifier#DEMO_PAYMENT_LINK_EXTERNAL_ID}) - a repeated
+ *   failure that reaches policy ALLOWED via the demo settlement evidence,
+ *   so it can be executed against a real Razorpay Test Mode Payment Link
+ *   when razorpay.key-id/key-secret are configured</li>
+ * </ol>
  * <p>
  * Only runs under {@code --spring.profiles.active=demo} / {@code
  * SPRING_PROFILES_ACTIVE=demo} - never in a default/production boot - and is
@@ -29,7 +38,7 @@ import java.time.temporal.ChronoUnit;
 @Profile("demo")
 public class DemoDataSeeder implements CommandLineRunner {
 
-    private static final String DEMO_PAYMENT_ID = "pay_demo_mandate_revoked";
+    private static final String MANDATE_REVOKED_PAYMENT_ID = "pay_demo_mandate_revoked";
 
     private final CustomerRepository customerRepository;
     private final PaymentRepository paymentRepository;
@@ -41,16 +50,30 @@ public class DemoDataSeeder implements CommandLineRunner {
 
     @Override
     public void run(String... args) {
-        if (paymentRepository.findByExternalPaymentId(DEMO_PAYMENT_ID).isPresent()) {
+        seedIfAbsent(MANDATE_REVOKED_PAYMENT_ID, "cust_demo_mandate_revoked", "sub_demo_mandate_revoked",
+                new BigDecimal("2499.00"), "Mandate revoked by customer bank");
+
+        // M1.25: failure reason deliberately contains "repeated"+"fail" so
+        // DiagnosisEngine's evidence-based rule reaches REPEATED_FAILURE ->
+        // PAYMENT_LINK naturally (no retry_count history needed, and none is
+        // seeded here - see DiagnosisEngine's M1.25 rule and
+        // docs/DEMO.md's real-Payment-Link walkthrough).
+        seedIfAbsent(DemoSettlementVerifier.DEMO_PAYMENT_LINK_EXTERNAL_ID, "cust_demo_payment_link", "sub_demo_payment_link",
+                new BigDecimal("1000.00"), "Repeated payment failure - card declined multiple times");
+    }
+
+    private void seedIfAbsent(String externalPaymentId, String externalCustomerId, String subscriptionId,
+                               BigDecimal amount, String failureReason) {
+        if (paymentRepository.findByExternalPaymentId(externalPaymentId).isPresent()) {
             return;
         }
 
-        Customer customer = customerRepository.save(new Customer("cust_demo_mandate_revoked", "demo.customer@example.com"));
+        Customer customer = customerRepository.save(new Customer(externalCustomerId, externalCustomerId + "@example.com"));
 
-        Payment payment = new Payment(DEMO_PAYMENT_ID, customer, new BigDecimal("2499.00"), "INR", PaymentStatus.FAILED);
-        payment.setSubscriptionId("sub_demo_mandate_revoked");
+        Payment payment = new Payment(externalPaymentId, customer, amount, "INR", PaymentStatus.FAILED);
+        payment.setSubscriptionId(subscriptionId);
         payment.setSubscriptionStatus("ACTIVE");
-        payment.setFailureReason("Mandate revoked by customer bank");
+        payment.setFailureReason(failureReason);
         payment.setFailedAt(Instant.now().minus(30, ChronoUnit.MINUTES));
         paymentRepository.save(payment);
     }

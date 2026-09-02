@@ -115,6 +115,26 @@ class RecoveryActionVerificationServiceTest {
                 () -> recoveryActionVerificationService.attemptVerification(action.getId()));
     }
 
+    /**
+     * M1.26: FAILED is not terminal - see the class javadoc. Re-verifying a
+     * FAILED action is allowed and, when the provider now confirms it,
+     * genuinely transitions to VERIFIED.
+     */
+    @Test
+    void failedAction_canBeReVerifiedAndSucceed() {
+        RecoveryAction action = seedExecutedAction("5");
+        RecoveryActionVerificationService failingThenSucceeding = new RecoveryActionVerificationService(
+                recoveryActionRepository, auditEventRepository, a -> VerificationStatus.FAILED);
+        failingThenSucceeding.attemptVerification(action.getId());
+        assertEquals(VerificationStatus.FAILED, recoveryActionRepository.findById(action.getId()).orElseThrow().getVerificationStatus());
+
+        RecoveryActionVerificationService nowSucceeding = new RecoveryActionVerificationService(
+                recoveryActionRepository, auditEventRepository, a -> VerificationStatus.VERIFIED);
+        RecoveryAction result = nowSucceeding.attemptVerification(action.getId());
+
+        assertEquals(VerificationStatus.VERIFIED, result.getVerificationStatus());
+    }
+
     @Test
     void alreadyVerifiedAction_cannotBeReVerified() {
         RecoveryAction action = seedExecutedAction("4");
