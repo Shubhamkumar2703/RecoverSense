@@ -14,6 +14,7 @@ import {
   type RecentCaseSummary,
   type RecoveryResponse,
 } from './api';
+import { latestPolicyEvaluation, policyCheckLabel, policyCheckState, type PolicyEvaluationPayload } from './policy';
 
 const STRATEGY_LABELS: Record<string, string> = {
   PAYMENT_LINK: 'Payment link',
@@ -37,6 +38,26 @@ function diagnosisSourceLabel(diagnosisSource: string | null): string {
   if (diagnosisSource === 'CLAUDE') return 'Claude';
   if (diagnosisSource === 'SIMULATED') return 'Deterministic Demo';
   return '—';
+}
+
+// M1.34: the compact table pill already shows REAL/DEMO (DATA_SOURCE_TONES);
+// this pairs it with a short, honest qualifier wherever there's room for one,
+// so a reader never has to infer what "REAL" vs "DEMO" actually means. Never
+// implies DEMO data is real, never implies more than dataSource itself says.
+function dataSourceDescriptor(dataSource: string): string {
+  if (dataSource === 'REAL') return 'Razorpay Test Mode';
+  if (dataSource === 'DEMO') return 'Seeded scenario';
+  return '';
+}
+
+function DataSourceBadge({ value }: { value: string }) {
+  const descriptor = dataSourceDescriptor(value);
+  return (
+    <span className={`source-badge ${DATA_SOURCE_TONES[value] ?? 'neutral'}`}>
+      <b>{value}</b>
+      {descriptor && <span> · {descriptor}</span>}
+    </span>
+  );
 }
 
 function formatCurrency(amount: number, currency: string): string {
@@ -98,6 +119,149 @@ const OUTCOME_INFO: Record<string, { headline: string; tone: PillTone }> = {
   EXECUTION_UNAVAILABLE: { headline: 'Recovery provider is currently unavailable', tone: 'warn' },
   VERIFICATION_UNAVAILABLE: { headline: 'Recovery could not be verified right now', tone: 'warn' },
 };
+
+// M1.34: policy explainability. The individual P01-P07 checks live only in
+// the audit trail's POLICY_EVALUATED payload (see policy.ts) - neither
+// RecoveryResponse nor RecentCaseSummary carries them, so this section reads
+// from auditEvents rather than the case row. When that payload can't be
+// parsed (older event, unexpected shape), this falls back to the plain
+// policyResult pill alone rather than showing broken or invented detail.
+function PolicyDecisionSection({
+  policyResult,
+  evaluation,
+}: {
+  policyResult: string | null;
+  evaluation: PolicyEvaluationPayload | null;
+}) {
+  if (!policyResult) return null;
+  const blocked = policyResult === 'BLOCKED';
+  const checks = evaluation?.checks ?? [];
+  const passedCount = checks.filter((c) => policyCheckState(c) === 'PASS').length;
+  const nonPassedCount = checks.length - passedCount;
+
+  return (
+    <div className="card policy-decision">
+      <div className="card-header">
+        <div className="card-title">Policy decision</div>
+        <span className={`pill ${blocked ? 'critical' : 'good'}`}>{policyResult}</span>
+      </div>
+      <p className="policy-decision-summary">
+        {blocked
+          ? 'RecoverSense did not execute the recommended recovery because required evidence could not be verified.'
+          : 'RecoverSense evaluated all required checks and allowed this recovery to proceed.'}
+      </p>
+      {checks.length > 0 && (
+        <>
+          <div className="policy-checks">
+            {checks.map((check) => {
+              const { code, label } = policyCheckLabel(check.checkName);
+              const state = policyCheckState(check);
+              const stateTone: PillTone = state === 'PASS' ? 'good' : state === 'UNKNOWN' ? 'warn' : 'critical';
+              const mark = state === 'PASS' ? '✓' : '!';
+              if (state === 'PASS') {
+                return (
+                  <div className="policy-check" key={check.checkName}>
+                    <div className="policy-check-row">
+                      <span className={`check-mark ${stateTone}`}>{mark}</span>
+                      <span className="check-code">{code}</span>
+                      <span className="check-label">{label}</span>
+                      <span className={`pill ${stateTone}`}>{state}</span>
+                    </div>
+                  </div>
+                );
+              }
+              return (
+                <details className="policy-check expandable" key={check.checkName}>
+                  <summary className="policy-check-row">
+                    <span className={`check-mark ${stateTone}`}>{mark}</span>
+                    <span className="check-code">{code}</span>
+                    <span className="check-label">{label}</span>
+                    <span className={`pill ${stateTone}`}>{state}</span>
+                    <span className="check-chevron">›</span>
+                  </summary>
+                  <div className="policy-check-detail">
+                    <div>
+                      <span>Status</span>
+                      <b>{state}</b>
+                    </div>
+                    <div>
+                      <span>Reason</span>
+                      <b>{check.reason}</b>
+                    </div>
+                    <div>
+                      <span>Impact</span>
+                      <b>Recovery blocked</b>
+                    </div>
+                  </div>
+                </details>
+              );
+            })}
+          </div>
+          <div className="policy-checks-foot muted">
+            {passedCount} passed{nonPassedCount > 0 ? ` · ${nonPassedCount} needs attention` : ''}
+          </div>
+        </>
+      )}
+      {blocked && <div className="no-action-banner">No financial action executed</div>}
+    </div>
+  );
+}
+
+// M1.34: reinforces the fixed pipeline order (CLAUDE.md #9) and specifically
+// that EXECUTED never implies RECOVERED - each step's state is derived
+// purely from fields already on RecentCaseSummary, never invented, and works
+// identically for a BLOCKED case (later steps simply never reached) as for a
+// fully RECOVERED one.
+type StepState = 'done' | 'blocked' | 'pending';
+
+function lifecycleStep(label: string, state: StepState, detail: string) {
+  return { label, state, detail };
+}
+
+function LifecycleStepper({ recoveryCase }: { recoveryCase: RecentCaseSummary }) {
+  const steps = [
+    lifecycleStep('Diagnosis', recoveryCase.diagnosisCategory ? 'done' : 'pending', recoveryCase.diagnosisCategory ?? 'Not yet diagnosed'),
+    lifecycleStep('Strategy', recoveryCase.strategy ? 'done' : 'pending', strategyLabel(recoveryCase.strategy)),
+    lifecycleStep(
+      'Policy',
+      recoveryCase.policyResult === 'ALLOWED' ? 'done' : recoveryCase.policyResult === 'BLOCKED' ? 'blocked' : 'pending',
+      recoveryCase.policyResult ?? 'Not yet evaluated',
+    ),
+    lifecycleStep(
+      'Execution',
+      recoveryCase.executionStatus === 'EXECUTED' ? 'done' : recoveryCase.executionStatus === 'FAILED' ? 'blocked' : 'pending',
+      recoveryCase.executionStatus ?? 'Not executed',
+    ),
+    lifecycleStep(
+      'Verification',
+      recoveryCase.verificationStatus === 'VERIFIED' ? 'done' : recoveryCase.verificationStatus === 'FAILED' ? 'blocked' : 'pending',
+      recoveryCase.verificationStatus ?? 'Not verified',
+    ),
+    lifecycleStep(
+      'Outcome',
+      recoveryCase.caseStatus === 'RECOVERED' ? 'done' : recoveryCase.caseStatus === 'FAILED' ? 'blocked' : 'pending',
+      recoveryCase.caseStatus,
+    ),
+  ];
+
+  return (
+    <div className="lifecycle">
+      {steps.map((step) => (
+        <div className={`lifecycle-step ${step.state}`} key={step.label}>
+          <span className="lifecycle-mark">{step.state === 'done' ? '✓' : step.state === 'blocked' ? '✕' : '·'}</span>
+          <span className="lifecycle-label">{step.label}</span>
+          <span className="lifecycle-detail">{step.detail}</span>
+        </div>
+      ))}
+      {recoveryCase.caseStatus === 'RECOVERED' && (
+        <div className="recovery-completed-banner">
+          <span>Recovery completed</span>
+          <b>{formatCurrency(recoveryCase.amount, recoveryCase.currency)} recovered</b>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function RecoveryResultCard({
   result,
@@ -215,34 +379,55 @@ function DecisionPanel({ recoveryCase }: { recoveryCase: RecentCaseSummary }) {
 
   return (
     <div className="decision">
-      <div className="eyebrow">Selected case · {recoveryCase.externalPaymentId}</div>
+      <div className="decision-top">
+        <div className="eyebrow">Selected case · {recoveryCase.externalPaymentId}</div>
+        <DataSourceBadge value={recoveryCase.dataSource} />
+      </div>
       <h2>{strategyLabel(recoveryCase.strategy)}</h2>
       <p>{recoveryCase.failureReason ?? 'No failure reason recorded.'}</p>
       <div className="decision-row">
-        <span>AI diagnosis</span>
+        <span>Diagnosis</span>
         <b>
           {recoveryCase.diagnosisCategory ?? '—'} · {confidence}
         </b>
       </div>
       <div className="decision-row">
-        <span>Provider</span>
+        <span>Source</span>
         <b>{diagnosisSourceLabel(recoveryCase.diagnosisSource)}</b>
-      </div>
-      <div className="decision-row">
-        <span>Policy</span>
-        <b>{recoveryCase.policyResult ?? '—'}</b>
       </div>
       <div className="decision-row">
         <span>Amount</span>
         <b>{formatCurrency(recoveryCase.amount, recoveryCase.currency)}</b>
       </div>
-      <div className="decision-row">
-        <span>Verification</span>
-        <b>{recoveryCase.verificationStatus ?? '—'}</b>
-      </div>
+
+      <LifecycleStepper recoveryCase={recoveryCase} />
     </div>
   );
 }
+
+// M1.34: human-readable labels for the existing, unchanged audit vocabulary
+// (see AuditEventSummary's backend Javadoc) - never fabricates or reorders
+// events, purely a display transform over eventType.
+const AUDIT_EVENT_LABELS: Record<string, string> = {
+  RECOVERY_CASE_OPENED: 'Case opened',
+  RECOVERY_DECISION_RECORDED: 'Decision recorded',
+  POLICY_EVALUATED: 'Policy evaluated',
+  ACTION_CREATED: 'Action created',
+  ACTION_NOT_CREATED: 'Action not created',
+  ACTION_EXECUTION_ATTEMPTED: 'Execution attempted',
+  ACTION_EXECUTION_UNAVAILABLE: 'Execution unavailable',
+  ACTION_VERIFICATION_ATTEMPTED: 'Verification attempted',
+  ACTION_VERIFICATION_UNAVAILABLE: 'Verification unavailable',
+  CASE_STATUS_CHANGED: 'Case status changed',
+};
+
+function auditEventLabel(eventType: string): string {
+  return AUDIT_EVENT_LABELS[eventType] ?? eventType.replaceAll('_', ' ').toLowerCase();
+}
+
+// Terminal events worth visually emphasizing in the timeline - recovery
+// reaching its final state, or policy declining to create an action at all.
+const AUDIT_EMPHASIS_EVENTS = new Set(['CASE_STATUS_CHANGED', 'ACTION_NOT_CREATED']);
 
 function AuditPanel({ recoveryCase, events }: { recoveryCase: RecentCaseSummary | null; events: AuditEventSummary[] }) {
   return (
@@ -256,8 +441,9 @@ function AuditPanel({ recoveryCase, events }: { recoveryCase: RecentCaseSummary 
       ) : (
         <div className="audit">
           {events.map((event, index) => (
-            <div key={index}>
-              <span className="time">{formatTime(event.createdAt)}</span> <span className="event">{event.eventType}</span>
+            <div className={AUDIT_EMPHASIS_EVENTS.has(event.eventType) ? 'audit-row emphasis' : 'audit-row'} key={index}>
+              <span className="time">{formatTime(event.createdAt)}</span>
+              <span className="event">{auditEventLabel(event.eventType)}</span>
             </div>
           ))}
         </div>
@@ -273,6 +459,8 @@ function CaseDetailSection({
   selectedCase: RecentCaseSummary | null;
   auditEvents: AuditEventSummary[];
 }) {
+  const evaluation = latestPolicyEvaluation(auditEvents);
+
   return (
     <section className="bottom">
       {selectedCase ? (
@@ -282,6 +470,9 @@ function CaseDetailSection({
           <div className="eyebrow">No case selected</div>
           <p>Select a row from the table above to see its decision detail.</p>
         </div>
+      )}
+      {selectedCase?.policyResult && (
+        <PolicyDecisionSection policyResult={selectedCase.policyResult} evaluation={evaluation} />
       )}
       <AuditPanel recoveryCase={selectedCase} events={auditEvents} />
     </section>
@@ -500,10 +691,13 @@ function AtRiskTable({
 }) {
   return (
     <section className="card table-card">
-      <div className="table-head">
-        <div className="card-title">At-risk payments</div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          {syncMessage && <span className="muted">{syncMessage}</span>}
+      <div className="table-head at-risk-head">
+        <div>
+          <div className="card-title">At-risk payments</div>
+          <div className="muted">Failed payments not yet under recovery - synced from Razorpay Test Mode or seeded for demo</div>
+        </div>
+        <div className="at-risk-controls">
+          {syncMessage && <span className="sync-status">{syncMessage}</span>}
           <button type="button" className="recover-btn" disabled={syncing} onClick={onSync}>
             {syncing ? 'Syncing…' : 'Sync Razorpay Test Mode'}
           </button>
@@ -532,7 +726,7 @@ function AtRiskTable({
                     <b>{row.externalPaymentId}</b>
                   </td>
                   <td>
-                    <Pill value={row.dataSource} tones={DATA_SOURCE_TONES} />
+                    <DataSourceBadge value={row.dataSource} />
                   </td>
                   <td>{formatCurrency(row.amount, row.currency)}</td>
                   <td>{row.failureReason ?? '—'}</td>
@@ -806,17 +1000,34 @@ export default function App() {
           !loadError && <div className="empty-state">Loading…</div>
         ) : (
           <>
-            <section className="metrics">
-              <div className="card">
-                <div className="metric-label">Revenue at risk</div>
-                <div className="metric-value">{formatCurrency(dashboard.summary.revenueAtRisk, 'INR')}</div>
-                <div className="metric-foot">{dashboard.recentCases.length} recovery cases</div>
-              </div>
-              <div className="card">
+            {/* M1.34: business outcomes first (recovered revenue, successful
+                recoveries, policy blocks), operational detail after - same
+                8 DashboardSummary fields as before, reordered/re-emphasized
+                for demo readability, nothing invented. */}
+            <section className="metrics hero-metrics">
+              <div className="card metric-hero good">
                 <div className="metric-label">Recovered</div>
                 <div className="metric-value">{formatCurrency(dashboard.summary.recoveredRevenue, 'INR')}</div>
                 <div className="metric-foot positive">{formatPercent(dashboard.summary.recoveryRate)} recovery rate</div>
               </div>
+              <div className="card metric-hero good">
+                <div className="metric-label">Successful recoveries</div>
+                <div className="metric-value">{dashboard.summary.recoveredCasesCount}</div>
+                <div className="metric-foot">independently verified before counting</div>
+              </div>
+              <div className="card metric-hero warn">
+                <div className="metric-label">Policy blocked</div>
+                <div className="metric-value">{dashboard.summary.policyBlocks}</div>
+                <div className="metric-foot">no financial action executed</div>
+              </div>
+              <div className="card metric-hero">
+                <div className="metric-label">Revenue at risk</div>
+                <div className="metric-value">{formatCurrency(dashboard.summary.revenueAtRisk, 'INR')}</div>
+                <div className="metric-foot">{dashboard.recentCases.length} recovery cases</div>
+              </div>
+            </section>
+
+            <section className="metrics">
               <div className="card">
                 <div className="metric-label">Recovery rate</div>
                 <div className="metric-value">{formatPercent(dashboard.summary.recoveryRate)}</div>
@@ -826,11 +1037,6 @@ export default function App() {
                 <div className="metric-label">Verified actions</div>
                 <div className="metric-value">{dashboard.summary.verifiedActions}</div>
                 <div className="metric-foot">independently verified</div>
-              </div>
-              <div className="card">
-                <div className="metric-label">Policy blocks</div>
-                <div className="metric-value">{dashboard.summary.policyBlocks}</div>
-                <div className="metric-foot">decisions blocked by policy</div>
               </div>
               <div className="card">
                 <div className="metric-label">Failed payments</div>

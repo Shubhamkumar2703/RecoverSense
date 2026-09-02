@@ -265,9 +265,14 @@ tbody tr:hover {
   color: var(--status-critical-ink);
 }
 
+/* M1.34: up to 3 panels (decision, policy, audit) side by side - auto-fit
+   lets the browser drop to 2, then 1 column as space shrinks without a hard
+   breakpoint per panel count, and align-items:start stops a short panel
+   (e.g. an empty audit trail) from being stretched to match a taller one. */
 .bottom {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  align-items: start;
   gap: 18px;
   margin-top: 18px;
 }
@@ -401,6 +406,325 @@ tbody tr:hover {
 
 .recovery-result .decision-row span:first-child {
   color: var(--ink-muted);
+}
+
+/* M1.34: source badge - stronger REAL/DEMO distinction than a bare pill,
+   used wherever there's room for the short qualifier (case detail, at-risk
+   table). The compact recovery-cases table keeps the plain Pill. */
+.source-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 9px;
+  border-radius: 99px;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.source-badge b {
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.source-badge span {
+  font-weight: 500;
+  opacity: 0.85;
+}
+
+.source-badge.good {
+  background: var(--status-good-bg);
+  color: var(--status-good-ink);
+}
+
+.source-badge.neutral {
+  background: var(--status-neutral-bg);
+  color: var(--status-neutral-ink);
+}
+
+.decision-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+/* Lifecycle stepper - reinforces the fixed pipeline order and specifically
+   that EXECUTED never implies RECOVERED (each step is independently true or
+   not reached, never inferred from a later one). */
+.lifecycle {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid #303438;
+}
+
+.lifecycle-step {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 0;
+  font-size: 11px;
+}
+
+.lifecycle-mark {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 800;
+  flex-shrink: 0;
+  background: #262a2e;
+  color: #5a6067;
+}
+
+.lifecycle-step.done .lifecycle-mark {
+  background: var(--status-good-bg);
+  color: var(--status-good-ink);
+}
+
+.lifecycle-step.blocked .lifecycle-mark {
+  background: var(--status-critical-bg);
+  color: var(--status-critical-ink);
+}
+
+.lifecycle-label {
+  width: 92px;
+  flex-shrink: 0;
+  color: #8f959c;
+  font-weight: 650;
+}
+
+.lifecycle-detail {
+  color: #d7dade;
+  font-weight: 650;
+}
+
+.lifecycle-step.pending .lifecycle-detail {
+  color: #6b7075;
+  font-weight: 500;
+}
+
+.recovery-completed-banner {
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--status-good-bg);
+  color: var(--status-good-ink);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.recovery-completed-banner span {
+  font-size: 10px;
+  font-weight: 750;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.recovery-completed-banner b {
+  font-size: 15px;
+}
+
+/* Policy decision card - the M1.34 explainability centerpiece. Its own card
+   (light theme, matching Audit trail) rather than nested in the dark
+   Decision panel, so the two list-shaped panels (policy checks, audit
+   timeline) sit side by side at comparable height instead of one column
+   growing far taller than the other. */
+.policy-decision-summary {
+  color: var(--ink-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 0 0 14px;
+}
+
+.policy-checks {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.policy-check {
+  background: var(--surface);
+  font-size: 11px;
+}
+
+.policy-check + .policy-check {
+  border-top: 1px solid var(--border-soft);
+}
+
+.policy-check-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  min-height: 20px;
+}
+
+summary.policy-check-row {
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+summary.policy-check-row:hover {
+  background: #fafbfc;
+}
+
+summary.policy-check-row::-webkit-details-marker {
+  display: none;
+}
+
+.check-mark {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+
+.check-mark.good {
+  background: var(--status-good-bg);
+  color: var(--status-good-ink);
+}
+
+.check-mark.warn {
+  background: var(--status-warn-bg);
+  color: var(--status-warn-ink);
+}
+
+.check-mark.critical {
+  background: var(--status-critical-bg);
+  color: var(--status-critical-ink);
+}
+
+.check-code {
+  color: var(--ink-faint);
+  font-weight: 750;
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  width: 26px;
+  flex-shrink: 0;
+}
+
+.check-label {
+  flex: 1;
+  color: var(--ink);
+  min-width: 0;
+}
+
+.check-chevron {
+  color: var(--ink-faint);
+  font-size: 13px;
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+
+.policy-check.expandable[open] .check-chevron {
+  transform: rotate(90deg);
+}
+
+.policy-check-detail {
+  margin: 0 12px 12px 46px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.policy-check-detail div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.policy-check-detail span {
+  color: var(--ink-muted);
+  flex-shrink: 0;
+}
+
+.policy-check-detail b {
+  color: var(--ink);
+  font-weight: 600;
+  text-align: right;
+}
+
+.policy-checks-foot {
+  margin-top: 10px;
+}
+
+.no-action-banner {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--status-critical-bg);
+  color: var(--status-critical-ink);
+  font-size: 11px;
+  font-weight: 750;
+  text-align: center;
+  letter-spacing: 0.03em;
+}
+
+/* Audit trail readability */
+.audit-row {
+  display: flex;
+  gap: 10px;
+  padding: 2px 0;
+}
+
+.audit-row.emphasis .event {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+/* Overview hero metrics */
+.hero-metrics {
+  margin-bottom: 10px;
+}
+
+.metric-hero {
+  border-left: 3px solid var(--border);
+}
+
+.metric-hero.good {
+  border-left-color: var(--status-good-ink);
+}
+
+.metric-hero.warn {
+  border-left-color: var(--status-warn-ink);
+}
+
+.at-risk-head {
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.at-risk-head .muted {
+  margin-top: 4px;
+}
+
+.at-risk-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.sync-status {
+  font-size: 11px;
+  color: var(--ink-muted);
+  max-width: 260px;
 }
 
 @media (max-width: 1100px) {
