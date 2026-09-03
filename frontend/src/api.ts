@@ -75,6 +75,63 @@ export interface RazorpaySyncResponse {
   message: string | null;
 }
 
+// Mirrors com.recoversense.policy.PolicyCheckResult exactly - same shape as
+// policy.ts's PolicyCheckEntry (structurally compatible, so policy.ts's
+// policyCheckLabel/policyCheckState work on these unchanged), kept as its
+// own type here rather than importing policy.ts to avoid a circular import
+// (policy.ts already imports AuditEventSummary from this file).
+export interface BatchPolicyCheck {
+  checkName: string;
+  passed: boolean;
+  reason: string;
+}
+
+// Mirrors com.recoversense.batch.BatchItemResult exactly.
+export interface BatchItemResult {
+  externalPaymentId: string;
+  description: string;
+  amount: number;
+  failureReason: string | null;
+  diagnosisCategory: string;
+  diagnosisConfidence: number;
+  strategy: string;
+  policyResult: string;
+  policyChecks: BatchPolicyCheck[];
+  outcome: string;
+  recoveredAmount: number | null;
+}
+
+// Mirrors com.recoversense.batch.BatchMetrics exactly. recoveryRate is a
+// fraction (0..1), same convention as DashboardSummary.recoveryRate.
+export interface BatchMetrics {
+  batchSize: number;
+  revenueAtRisk: number;
+  policyEligible: number;
+  policyBlocked: number;
+  actionsAttempted: number;
+  verifiedRecoveries: number;
+  revenueRecovered: number;
+  recoveryRate: number;
+}
+
+// Mirrors com.recoversense.batch.BatchSafetySummary exactly - every field is
+// expected to always be 0 (see BatchEvaluationService's javadoc); shown to
+// prove that, not because a nonzero value is anticipated.
+export interface BatchSafetySummary {
+  unauthorizedActions: number;
+  policyViolations: number;
+  duplicatePendingActions: number;
+  unverifiedRecoveries: number;
+}
+
+// Mirrors com.recoversense.batch.BatchEvaluationResponse exactly.
+export interface BatchEvaluationResponse {
+  datasetLabel: string;
+  metrics: BatchMetrics;
+  safety: BatchSafetySummary;
+  items: BatchItemResult[];
+}
+
 // Mirrors com.recoversense.demo.DemoResetResponse exactly. Only ever returned
 // by resetDemoPaymentLink() below - the reset endpoint only exists at all
 // under the backend's demo profile (see DemoController), so this type has no
@@ -139,6 +196,14 @@ export function fetchAuditTrail(recoveryCaseId: number): Promise<AuditEventSumma
 
 export function fetchAtRiskPayments(): Promise<AtRiskPaymentSummary[]> {
   return getJson<AtRiskPaymentSummary[]>('/api/dashboard/payments/at-risk');
+}
+
+// Batch Recovery Evaluation - a pure, side-effect-free computation over a
+// fixed, non-persisted, clearly-labeled SIMULATED dataset (see
+// BatchEvaluationService). Never touches real payments, never calls
+// Razorpay - GET, not POST, because it has no effect to trigger.
+export function fetchBatchEvaluation(): Promise<BatchEvaluationResponse> {
+  return getJson<BatchEvaluationResponse>('/api/batch/evaluate');
 }
 
 // M1.26: pulls real Razorpay Test Mode failed payments into RecoverSense's

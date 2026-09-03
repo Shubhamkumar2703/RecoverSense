@@ -67,5 +67,11 @@ public class DashboardCorsConfig implements WebMvcConfigurer {
         registry.addMapping("/api/demo/**")
                 .allowedOriginPatterns(allowedOrigins)
                 .allowedMethods("GET", "POST");
+
+        // Batch Recovery Evaluation (BatchController) - GET-only, read-only
+        // pure computation over a fixed dataset, same as /api/dashboard/**.
+        registry.addMapping("/api/batch/**")
+                .allowedOriginPatterns(allowedOrigins)
+                .allowedMethods("GET");
     }
 }

@@ -4,6 +4,7 @@ import {
   checkDemoAvailable,
   fetchAtRiskPayments,
   fetchAuditTrail,
+  fetchBatchEvaluation,
   fetchDashboard,
   recoverPayment,
   resetDemoPaymentLink,
@@ -12,6 +13,8 @@ import {
   RecoveryApiError,
   type AtRiskPaymentSummary,
   type AuditEventSummary,
+  type BatchEvaluationResponse,
+  type BatchItemResult,
   type DashboardResponse,
   type RecentCaseSummary,
   type RecoveryResponse,
@@ -646,6 +649,187 @@ function CasesTable({
   );
 }
 
+const BATCH_OUTCOME_INFO: Record<string, { label: string; tone: PillTone }> = {
+  BLOCKED: { label: 'Blocked', tone: 'critical' },
+  ALLOWED_NO_EXECUTABLE_ACTION: { label: 'Allowed - no executable action', tone: 'neutral' },
+  EXECUTED_AWAITING_VERIFICATION: { label: 'Executed - unverified', tone: 'warn' },
+  VERIFIED_RECOVERED: { label: 'Verified - recovered', tone: 'good' },
+};
+
+// Track 03: measured recovery economics across a batch. Every number here
+// comes from BatchEvaluationService running the real, unmodified
+// DiagnosisEngine/StrategyRouter/PolicyEngine over a fixed, non-persisted,
+// clearly-labeled SIMULATED dataset - never real Razorpay transactions, and
+// never the same thing as the real hero Payment Link recovery shown
+// elsewhere in this app. revenueRecovered only ever sums items whose
+// outcome is VERIFIED_RECOVERED - an EXECUTED_AWAITING_VERIFICATION row is
+// shown, with its amount visible, specifically to make "execution is not
+// recovery" legible in the table itself, not just asserted in prose.
+function BatchEvaluationView({
+  evaluation,
+  loading,
+  errorMessage,
+  onRefresh,
+}: {
+  evaluation: BatchEvaluationResponse | null;
+  loading: boolean;
+  errorMessage: string | null;
+  onRefresh: () => void;
+}) {
+  return (
+    <>
+      <section className="card">
+        <div className="card-header">
+          <div className="card-title">Batch Recovery Evaluation</div>
+          <button type="button" className="recover-btn secondary" disabled={loading} onClick={onRefresh}>
+            {loading ? 'Evaluating…' : 'Run batch evaluation'}
+          </button>
+        </div>
+        <p className="muted">
+          {evaluation?.datasetLabel ?? 'Evaluation dataset · SIMULATED - not real Razorpay transactions'}
+        </p>
+      </section>
+
+      {errorMessage && <div className="error-banner">Could not load batch evaluation: {errorMessage}</div>}
+
+      {!evaluation ? (
+        !loading && !errorMessage && <div className="empty-state">Click "Run batch evaluation" to compute measured results.</div>
+      ) : (
+        <>
+          <section className="metrics hero-metrics">
+            <div className="card metric-hero">
+              <div className="metric-label">Revenue at risk</div>
+              <div className="metric-value">{formatCurrency(evaluation.metrics.revenueAtRisk, 'INR')}</div>
+              <div className="metric-foot">{evaluation.metrics.batchSize} payments evaluated</div>
+            </div>
+            <div className="card metric-hero good">
+              <div className="metric-label">Recovered</div>
+              <div className="metric-value">{formatCurrency(evaluation.metrics.revenueRecovered, 'INR')}</div>
+              <div className="metric-foot positive">verified only - execution alone never counts</div>
+            </div>
+            <div className="card metric-hero good">
+              <div className="metric-label">Recovery rate</div>
+              <div className="metric-value">{formatPercent(evaluation.metrics.recoveryRate)}</div>
+              <div className="metric-foot">recovered / at risk</div>
+            </div>
+            <div className="card metric-hero warn">
+              <div className="metric-label">Policy blocked</div>
+              <div className="metric-value">{evaluation.metrics.policyBlocked}</div>
+              <div className="metric-foot">no financial action executed</div>
+            </div>
+          </section>
+
+          <section className="grid">
+            <div className="card">
+              <div className="card-header">
+                <div className="card-title">Recovery outcomes</div>
+              </div>
+              <div className="breakdown">
+                <div className="break-item">
+                  <div className="break-num">{evaluation.metrics.policyEligible}</div>
+                  <div className="break-name">Eligible</div>
+                </div>
+                <div className="break-item">
+                  <div className="break-num">{evaluation.metrics.policyBlocked}</div>
+                  <div className="break-name">Blocked</div>
+                </div>
+                <div className="break-item">
+                  <div className="break-num">{evaluation.metrics.actionsAttempted}</div>
+                  <div className="break-name">Actions</div>
+                </div>
+                <div className="break-item">
+                  <div className="break-num">{evaluation.metrics.verifiedRecoveries}</div>
+                  <div className="break-name">Verified</div>
+                </div>
+              </div>
+            </div>
+
+            <div className="card">
+              <div className="card-header">
+                <div className="card-title">Safety</div>
+                <div className="muted">structural invariants - see each row's evidence below</div>
+              </div>
+              <div className="breakdown">
+                <div className="break-item">
+                  <div className="break-num">{evaluation.safety.policyViolations}</div>
+                  <div className="break-name">Policy violations</div>
+                </div>
+                <div className="break-item">
+                  <div className="break-num">{evaluation.safety.unauthorizedActions}</div>
+                  <div className="break-name">Unauthorized actions</div>
+                </div>
+                <div className="break-item">
+                  <div className="break-num">{evaluation.safety.duplicatePendingActions}</div>
+                  <div className="break-name">Duplicate pending actions</div>
+                </div>
+                <div className="break-item">
+                  <div className="break-num">{evaluation.safety.unverifiedRecoveries}</div>
+                  <div className="break-name">Unverified recoveries</div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <BatchCaseBreakdownTable items={evaluation.items} />
+        </>
+      )}
+    </>
+  );
+}
+
+function BatchCaseBreakdownTable({ items }: { items: BatchItemResult[] }) {
+  return (
+    <section className="card table-card">
+      <div className="table-head">
+        <div className="card-title">Case breakdown</div>
+        <div className="muted">Showing {items.length}</div>
+      </div>
+      <div className="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Payment</th>
+              <th>Amount</th>
+              <th>Diagnosis</th>
+              <th>Strategy</th>
+              <th>Policy</th>
+              <th>Outcome</th>
+              <th>Recovered</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((item) => {
+              const outcomeInfo = BATCH_OUTCOME_INFO[item.outcome] ?? { label: item.outcome, tone: 'neutral' as PillTone };
+              const failedChecks = item.policyChecks.filter((check) => !check.passed);
+              return (
+                <tr key={item.externalPaymentId}>
+                  <td>
+                    <b>{item.externalPaymentId}</b>
+                    <div className="muted">{item.description}</div>
+                  </td>
+                  <td>{formatCurrency(item.amount, 'INR')}</td>
+                  <td>{item.diagnosisCategory}</td>
+                  <td>{strategyLabel(item.strategy)}</td>
+                  <td>
+                    <Pill value={item.policyResult} tones={POLICY_TONES} />
+                    {failedChecks.length > 0 && (
+                      <div className="muted">{policyCheckLabel(failedChecks[0].checkName).label}</div>
+                    )}
+                  </td>
+                  <td>
+                    <span className={`pill ${outcomeInfo.tone}`}>{outcomeInfo.label}</span>
+                  </td>
+                  <td>{item.recoveredAmount != null ? formatCurrency(item.recoveredAmount, 'INR') : '—'}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
 // Static, honest description of what's actually wired up - not a live health
 // check (no backend endpoint exists for this, and M1.24 adds none). Every
 // status a browser cannot actually verify (Razorpay/Claude credentials are
@@ -820,7 +1004,7 @@ function AtRiskTable({
   );
 }
 
-type WorkspaceView = 'overview' | 'at-risk' | 'cases' | 'audit' | 'integrations';
+type WorkspaceView = 'overview' | 'at-risk' | 'cases' | 'audit' | 'batch' | 'integrations';
 
 function NavLink({
   view,
@@ -855,6 +1039,10 @@ const VIEW_COPY: Record<WorkspaceView, { title: string; subtitle: string }> = {
   },
   cases: { title: 'Recovery Cases', subtitle: 'Every recovery case RecoverSense has opened, with its decision detail' },
   audit: { title: 'Audit Trail', subtitle: 'The recorded decision trail for a selected recovery case' },
+  batch: {
+    title: 'Batch Recovery Evaluation',
+    subtitle: 'Measured recovery economics across a fixed evaluation dataset - simulated, never real Razorpay transactions',
+  },
   integrations: { title: 'Integrations', subtitle: 'What is actually connected, real, or simulated in this build' },
 };
 
@@ -874,6 +1062,9 @@ export default function App() {
   const [demoAvailable, setDemoAvailable] = useState(false);
   const [resettingDemo, setResettingDemo] = useState(false);
   const [resetMessage, setResetMessage] = useState<string | null>(null);
+  const [batchEvaluation, setBatchEvaluation] = useState<BatchEvaluationResponse | null>(null);
+  const [batchLoading, setBatchLoading] = useState(false);
+  const [batchError, setBatchError] = useState<string | null>(null);
 
   const loadAtRiskPayments = useCallback(() => {
     return fetchAtRiskPayments()
@@ -1011,6 +1202,28 @@ export default function App() {
     }
   }
 
+  // Pure, side-effect-free, deterministic given the fixed backend dataset -
+  // safe to (re-)run on demand, and lazily on first visiting the view rather
+  // than on every app load, since nothing else on the dashboard depends on it.
+  async function handleRunBatchEvaluation() {
+    setBatchLoading(true);
+    setBatchError(null);
+    try {
+      const result = await fetchBatchEvaluation();
+      setBatchEvaluation(result);
+    } catch (error) {
+      setBatchError(error instanceof Error ? error.message : 'Something went wrong while evaluating the batch.');
+    } finally {
+      setBatchLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (activeView === 'batch' && !batchEvaluation && !batchLoading) {
+      handleRunBatchEvaluation();
+    }
+  }, [activeView, batchEvaluation, batchLoading]);
+
   const selectedCase = dashboard?.recentCases.find((c) => c.recoveryCaseId === selectedCaseId) ?? null;
 
   return (
@@ -1027,6 +1240,7 @@ export default function App() {
           <NavLink view="at-risk" label="At-risk payments" activeView={activeView} onSelect={setActiveView} />
           <NavLink view="cases" label="Recovery cases" activeView={activeView} onSelect={setActiveView} />
           <NavLink view="audit" label="Audit trail" activeView={activeView} onSelect={setActiveView} />
+          <NavLink view="batch" label="Batch evaluation" activeView={activeView} onSelect={setActiveView} />
         </div>
 
         <div className="nav-title">System</div>
@@ -1074,6 +1288,13 @@ export default function App() {
           />
         ) : activeView === 'integrations' ? (
           <IntegrationsView />
+        ) : activeView === 'batch' ? (
+          <BatchEvaluationView
+            evaluation={batchEvaluation}
+            loading={batchLoading}
+            errorMessage={batchError}
+            onRefresh={handleRunBatchEvaluation}
+          />
         ) : activeView === 'audit' ? (
           selectedCase ? (
             <AuditPanel recoveryCase={selectedCase} events={auditEvents} />
