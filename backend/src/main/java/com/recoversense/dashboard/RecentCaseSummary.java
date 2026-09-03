@@ -15,6 +15,11 @@ import java.time.Instant;
  * DiagnosisSource.parsePrefix - so the UI can label a diagnosis truthfully
  * instead of leaving the provider unstated. Never inferred beyond what
  * DiagnosisService actually recorded.
+ * <p>
+ * M1.35: providerUrl mirrors RecoveryAction.providerUrl exactly (null unless
+ * a PAYMENT_LINK action was created) - lets the frontend keep showing the
+ * same hosted Payment Link on every later load of this case (including after
+ * a page refresh), without re-executing anything.
  */
 public record RecentCaseSummary(
         Long recoveryCaseId,
@@ -32,6 +37,7 @@ public record RecentCaseSummary(
         String caseStatus,
         Instant openedAt,
         String dataSource,
-        String diagnosisSource
+        String diagnosisSource,
+        String providerUrl
 ) {
 }

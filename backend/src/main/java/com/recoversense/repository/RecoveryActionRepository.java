@@ -57,4 +57,6 @@ public interface RecoveryActionRepository extends JpaRepository<RecoveryAction, 
     long countByExecutionStatusAndVerificationStatus(ExecutionStatus executionStatus, VerificationStatus verificationStatus);
 
     long countByExecutionStatus(ExecutionStatus executionStatus);
+
+    void deleteByRecoveryCaseIn(List<RecoveryCase> recoveryCases);
 }

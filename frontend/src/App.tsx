@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import './App.css';
 import {
+  checkDemoAvailable,
   fetchAtRiskPayments,
   fetchAuditTrail,
   fetchDashboard,
   recoverPayment,
+  resetDemoPaymentLink,
   syncRazorpayPayments,
   verifyRecovery,
   RecoveryApiError,
@@ -373,6 +375,58 @@ function recoveryErrorMessage(error: unknown): string {
   return 'Something went wrong while starting recovery. Please try again.';
 }
 
+// M1.35: derives entirely from the persisted RecentCaseSummary.providerUrl -
+// never from the ephemeral recover()/verify() result, so it survives a page
+// refresh or navigating away and back. Never triggers execute()/recover()
+// itself: if this is null, the case simply has no Payment Link yet (or
+// never will, e.g. it was blocked) - the operator must explicitly click
+// Recover for that, same as any other case.
+function PaymentLinkCard({ recoveryCase }: { recoveryCase: RecentCaseSummary }) {
+  const [copied, setCopied] = useState(false);
+
+  if (!recoveryCase.providerUrl || recoveryCase.executionStatus !== 'EXECUTED') {
+    return null;
+  }
+  const verified = recoveryCase.verificationStatus === 'VERIFIED';
+
+  async function handleCopy() {
+    try {
+      await navigator.clipboard.writeText(recoveryCase.providerUrl!);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard permission can be denied by the browser - the link is
+      // still right there to select/copy manually, so this fails silently
+      // rather than showing an error banner for a non-critical convenience.
+    }
+  }
+
+  return (
+    <div className={`payment-link-card ${verified ? 'verified' : 'pending'}`}>
+      <div className="payment-link-head">
+        <span className="payment-link-title">Payment link</span>
+        <span className={`pill ${verified ? 'good' : 'warn'}`}>
+          {verified ? 'Verified' : 'Awaiting customer payment'}
+        </span>
+      </div>
+      <div className="payment-link-amount">{formatCurrency(recoveryCase.amount, recoveryCase.currency)} recovery payment</div>
+      <div className="payment-link-actions">
+        <a className="recover-btn" href={recoveryCase.providerUrl} target="_blank" rel="noreferrer">
+          Open payment link ↗
+        </a>
+        <button type="button" className="recover-btn secondary" onClick={handleCopy}>
+          {copied ? 'Copied' : 'Copy link'}
+        </button>
+      </div>
+      <p className="payment-link-note">
+        {verified
+          ? 'This payment link is kept as a record of the completed recovery.'
+          : 'This payment link remains available until the recovery is verified.'}
+      </p>
+    </div>
+  );
+}
+
 function DecisionPanel({ recoveryCase }: { recoveryCase: RecentCaseSummary }) {
   const confidence =
     recoveryCase.diagnosisConfidence !== null ? `${(recoveryCase.diagnosisConfidence * 100).toFixed(0)}%` : '—';
@@ -401,6 +455,7 @@ function DecisionPanel({ recoveryCase }: { recoveryCase: RecentCaseSummary }) {
       </div>
 
       <LifecycleStepper recoveryCase={recoveryCase} />
+      <PaymentLinkCard recoveryCase={recoveryCase} />
     </div>
   );
 }
@@ -681,6 +736,10 @@ function AtRiskTable({
   onSync,
   syncing,
   syncMessage,
+  demoAvailable,
+  onResetDemo,
+  resettingDemo,
+  resetMessage,
 }: {
   payments: AtRiskPaymentSummary[];
   recoveringPaymentId: number | null;
@@ -688,6 +747,10 @@ function AtRiskTable({
   onSync: () => void;
   syncing: boolean;
   syncMessage: string | null;
+  demoAvailable: boolean;
+  onResetDemo: () => void;
+  resettingDemo: boolean;
+  resetMessage: string | null;
 }) {
   return (
     <section className="card table-card">
@@ -697,7 +760,13 @@ function AtRiskTable({
           <div className="muted">Failed payments not yet under recovery - synced from Razorpay Test Mode or seeded for demo</div>
         </div>
         <div className="at-risk-controls">
+          {resetMessage && <span className="sync-status">{resetMessage}</span>}
           {syncMessage && <span className="sync-status">{syncMessage}</span>}
+          {demoAvailable && (
+            <button type="button" className="recover-btn secondary" disabled={resettingDemo} onClick={onResetDemo}>
+              {resettingDemo ? 'Resetting…' : 'Reset Demo'}
+            </button>
+          )}
           <button type="button" className="recover-btn" disabled={syncing} onClick={onSync}>
             {syncing ? 'Syncing…' : 'Sync Razorpay Test Mode'}
           </button>
@@ -802,6 +871,9 @@ export default function App() {
   const [atRiskPayments, setAtRiskPayments] = useState<AtRiskPaymentSummary[]>([]);
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
+  const [demoAvailable, setDemoAvailable] = useState(false);
+  const [resettingDemo, setResettingDemo] = useState(false);
+  const [resetMessage, setResetMessage] = useState<string | null>(null);
 
   const loadAtRiskPayments = useCallback(() => {
     return fetchAtRiskPayments()
@@ -835,6 +907,7 @@ export default function App() {
       }
     });
     loadAtRiskPayments();
+    checkDemoAvailable().then(setDemoAvailable);
   }, [loadDashboard, loadAtRiskPayments]);
 
   useEffect(() => {
@@ -912,6 +985,32 @@ export default function App() {
     }
   }
 
+  // Demo-only operator convenience (DemoController is only wired under the
+  // backend's demo profile - see checkDemoAvailable). Resets exactly the
+  // seeded hero payment, never anything the operator picks, so a repeat demo
+  // run doesn't require shell/database access.
+  async function handleResetDemo() {
+    const confirmed = window.confirm(
+      'Reset the hero demo payment?\n\nThis will clear the previous recovery attempt for pay_demo_payment_link and return it to FAILED.',
+    );
+    if (!confirmed) return;
+
+    setResettingDemo(true);
+    setResetMessage(null);
+    try {
+      await resetDemoPaymentLink();
+      setResetMessage('Demo payment reset. Ready to recover again.');
+      setRecoveryResult(null);
+      setRecoveryErrorText(null);
+      await loadDashboard();
+      await loadAtRiskPayments();
+    } catch {
+      setResetMessage('Demo reset failed. Please try again.');
+    } finally {
+      setResettingDemo(false);
+    }
+  }
+
   const selectedCase = dashboard?.recentCases.find((c) => c.recoveryCaseId === selectedCaseId) ?? null;
 
   return (
@@ -968,6 +1067,10 @@ export default function App() {
             onSync={handleSync}
             syncing={syncing}
             syncMessage={syncMessage}
+            demoAvailable={demoAvailable}
+            onResetDemo={handleResetDemo}
+            resettingDemo={resettingDemo}
+            resetMessage={resetMessage}
           />
         ) : activeView === 'integrations' ? (
           <IntegrationsView />

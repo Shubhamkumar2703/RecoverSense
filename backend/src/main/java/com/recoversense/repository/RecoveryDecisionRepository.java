@@ -12,6 +12,8 @@ public interface RecoveryDecisionRepository extends JpaRepository<RecoveryDecisi
 
     Optional<RecoveryDecision> findTopByRecoveryCaseOrderByDecidedAtDesc(RecoveryCase recoveryCase);
 
+    void deleteByRecoveryCaseIn(List<RecoveryCase> recoveryCases);
+
     @Query("select rd.strategy as strategy, count(rd) as total from RecoveryDecision rd group by rd.strategy")
     List<StrategyCount> countGroupedByStrategy();
 

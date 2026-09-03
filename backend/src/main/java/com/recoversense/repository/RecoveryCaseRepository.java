@@ -15,6 +15,8 @@ public interface RecoveryCaseRepository extends JpaRepository<RecoveryCase, Long
 
     Optional<RecoveryCase> findByPaymentAndStatus(Payment payment, RecoveryCaseStatus status);
 
+    List<RecoveryCase> findByPayment(Payment payment);
+
     boolean existsByPaymentAndStatus(Payment payment, RecoveryCaseStatus status);
 
     List<RecoveryCase> findTop20ByOrderByOpenedAtDesc();

@@ -38,6 +38,10 @@ export interface RecentCaseSummary {
   // recorded - see DiagnosisSource.parsePrefix. Never labeled "Claude"
   // unless Claude was actually invoked.
   diagnosisSource: string | null;
+  // M1.35: the hosted Payment Link URL, persisted server-side (RecoveryAction.providerUrl)
+  // so it survives a page refresh/navigation, not just the one recover()
+  // response that created it. Null unless a PAYMENT_LINK action exists.
+  providerUrl: string | null;
 }
 
 export interface DashboardResponse {
@@ -69,6 +73,16 @@ export interface RazorpaySyncResponse {
   imported: number;
   skipped: number;
   message: string | null;
+}
+
+// Mirrors com.recoversense.demo.DemoResetResponse exactly. Only ever returned
+// by resetDemoPaymentLink() below - the reset endpoint only exists at all
+// under the backend's demo profile (see DemoController), so this type has no
+// bearing on non-demo deployments.
+export interface DemoResetResponse {
+  success: boolean;
+  paymentId: string;
+  status: string;
 }
 
 // Mirrors com.recoversense.recovery.RecoveryResponse exactly (M1.20, +providerUrl M1.25).
@@ -168,4 +182,31 @@ export async function verifyRecovery(recoveryCaseId: number): Promise<RecoveryRe
     throw new RecoveryApiError(response.status, body?.message ?? `verify failed with status ${response.status}`);
   }
   return response.json() as Promise<RecoveryResponse>;
+}
+
+// DemoController only exists as a bean under the backend's demo profile
+// (@Profile("demo")) - in every other profile this route is unmapped and
+// returns 404, which this resolves to false rather than throwing. Used once
+// on load to decide whether to show the "Reset Demo" operator control at
+// all; never assumes based on hostname.
+export async function checkDemoAvailable(): Promise<boolean> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/demo/status`);
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+// Demo-only operator convenience: resets exactly pay_demo_payment_link back
+// to its seeded FAILED state so the hero demo can be repeated. See
+// DemoResetService - scoped server-side to that one payment id, never takes
+// a paymentId/caseId from the caller.
+export async function resetDemoPaymentLink(): Promise<DemoResetResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/demo/reset-payment-link`, { method: 'POST' });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { message?: string } | null;
+    throw new RecoveryApiError(response.status, body?.message ?? `demo reset failed with status ${response.status}`);
+  }
+  return response.json() as Promise<DemoResetResponse>;
 }

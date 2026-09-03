@@ -61,5 +61,11 @@ public class DashboardCorsConfig implements WebMvcConfigurer {
         registry.addMapping("/api/recovery/**")
                 .allowedOriginPatterns(allowedOrigins)
                 .allowedMethods("POST");
+
+        // Demo-only (DemoController, @Profile("demo")) - status is a GET
+        // feature-detection probe, reset-payment-link is the one POST.
+        registry.addMapping("/api/demo/**")
+                .allowedOriginPatterns(allowedOrigins)
+                .allowedMethods("GET", "POST");
     }
 }

@@ -529,6 +529,64 @@ tbody tr:hover {
   font-size: 15px;
 }
 
+/* M1.35: persistent Payment Link card - lives inside the dark Decision
+   panel, driven by RecentCaseSummary.providerUrl (persisted data), so it
+   looks and stays identical across a page refresh or navigating away and
+   back, not just right after clicking Recover. */
+.payment-link-card {
+  margin-top: 14px;
+  padding: 14px;
+  border-radius: 9px;
+  background: #1b1d20;
+  border: 1px solid #303438;
+}
+
+.payment-link-card.verified {
+  border-color: #2a3d33;
+}
+
+.payment-link-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.payment-link-title {
+  font-size: 11px;
+  font-weight: 750;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #8f959c;
+}
+
+.payment-link-amount {
+  color: #d7dade;
+  font-size: 13px;
+  font-weight: 650;
+  margin-bottom: 12px;
+}
+
+.payment-link-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.recover-btn.secondary {
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid #3a3f44;
+}
+
+.payment-link-note {
+  color: #8f959c;
+  font-size: 11px;
+  line-height: 1.5;
+  margin: 10px 0 0;
+}
+
 /* Policy decision card - the M1.34 explainability centerpiece. Its own card
    (light theme, matching Audit trail) rather than nested in the dark
    Decision panel, so the two list-shaped panels (policy checks, audit

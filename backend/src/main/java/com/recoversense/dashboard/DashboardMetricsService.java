@@ -142,6 +142,7 @@ public class DashboardMetricsService {
         String executionStatus = null;
         String verificationStatus = null;
         String diagnosisSource = null;
+        String providerUrl = null;
 
         if (latestDecision.isPresent()) {
             RecoveryDecision decision = latestDecision.get();
@@ -160,6 +161,7 @@ public class DashboardMetricsService {
                 policyResult = action.getPolicyResult().name();
                 executionStatus = action.getExecutionStatus().name();
                 verificationStatus = action.getVerificationStatus().name();
+                providerUrl = action.getProviderUrl();
             }
         }
 
@@ -179,7 +181,8 @@ public class DashboardMetricsService {
                 recoveryCase.getStatus().name(),
                 recoveryCase.getOpenedAt(),
                 classifyDataSource(payment.getExternalPaymentId()),
-                diagnosisSource
+                diagnosisSource,
+                providerUrl
         );
     }
 }
