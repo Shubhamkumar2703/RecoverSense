@@ -170,7 +170,7 @@ It never runs under the default profile, never touches an existing payment, and 
 
 ## 18. Final project status
 
-Core pipeline (diagnosis → strategy → policy → action → execution → verification → lifecycle → audit), the dashboard, At-Risk Payments, and the re-recovery guard are implemented and covered by the backend test suite (`.\mvnw.cmd test` in `backend/`). See [`docs/PROJECT_STATE.md`](docs/PROJECT_STATE.md) for the current milestone log.
+Core pipeline (diagnosis → strategy → policy → action → execution → verification → lifecycle → audit), the dashboard, At-Risk Payments, and the re-recovery guard are implemented and covered by the backend test suite (`.\mvnw.cmd test` in `backend/`).
 
 ## Repository
 
