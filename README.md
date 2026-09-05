@@ -1,97 +1,1040 @@
 # RecoverSense
 
-**Adaptive revenue recovery for recurring payments.**
+### Adaptive Revenue Recovery for Recurring Payments
 
-Built for the Razorpay AI Buildathon 2026 — AI Revenue Recovery track.
+**Built for the Razorpay AI Buildathon 2026 — AI Revenue Recovery Track**
 
-## 1. What is RecoverSense?
+> **RecoverSense is a sixth sense for failed payments — it understands why a payment failed, chooses the right recovery path, checks whether that action is allowed, executes it safely, and verifies that the money was actually recovered.**
 
-RecoverSense is a decision engine for failed recurring payments. When a payment fails, it doesn't just retry — it diagnoses *why* the payment failed, selects a recovery strategy for that specific failure, checks the action against deterministic merchant policy, executes it, and independently re-fetches state to verify the money actually came back before counting it as recovered.
+---
 
-## 2. Problem being solved
+## 🚀 The Problem
 
-Most dunning/retry systems treat every failure the same way: wait, then retry. A mandate revocation is not the same problem as insufficient funds, and blind retries waste attempts, annoy customers, and don't distinguish "will probably recover on its own" from "needs the merchant to act." RecoverSense treats recovery as a diagnosis-and-decision problem, not a timing problem.
+Most recurring-payment recovery systems treat every failure the same way:
 
-## 3. Core pipeline
+```text
+Payment Failed
+      ↓
+Wait
+      ↓
+Retry
+      ↓
+Retry Again
+````
 
+But every payment failure is not the same.
+
+A **revoked mandate**, **insufficient funds**, **temporary failure**, **card issue**, **repeated failure**, or **cancelled subscription** can require completely different recovery actions.
+
+Blind retries can:
+
+* Waste retry attempts
+* Annoy customers
+* Repeat actions that cannot succeed
+* Miss better recovery opportunities
+* Create duplicate recovery attempts
+* Incorrectly count an attempted payment as recovered
+
+### RecoverSense changes the question from:
+
+> "When should we retry?"
+
+to:
+
+> **"Why did this payment fail, what should we do, are we allowed to do it, and did it actually work?"**
+
+---
+
+# 🧠 What is RecoverSense?
+
+RecoverSense is an **adaptive revenue recovery decision engine for recurring payments**.
+
+When a payment fails, RecoverSense follows a controlled decision pipeline:
+
+```text
+FAILED PAYMENT
+      │
+      ▼
+┌─────────────┐
+│  DIAGNOSIS  │  ← Why did it fail?
+└──────┬──────┘
+       ▼
+┌─────────────┐
+│  STRATEGY   │  ← What should we try?
+└──────┬──────┘
+       ▼
+┌─────────────┐
+│   POLICY    │  ← Are we allowed to?
+└──────┬──────┘
+       ▼
+┌─────────────┐
+│   ACTION    │
+└──────┬──────┘
+       ▼
+┌─────────────┐
+│  EXECUTION  │  ← Perform the action
+└──────┬──────┘
+       ▼
+┌─────────────┐
+│ VERIFICATION│  ← Did recovery actually happen?
+└──────┬──────┘
+       ▼
+┌─────────────┐
+│ CASE STATUS │
+└──────┬──────┘
+       ▼
+┌─────────────┐
+│    AUDIT    │
+└─────────────┘
 ```
-Diagnosis → Strategy → Policy → Action → Execution → Verification → Case Lifecycle → Audit
+
+The key idea:
+
+> **Execution is not recovery. Verification is what makes recovery real.**
+
+---
+
+# 🤖 AI-Powered Diagnosis
+
+RecoverSense uses **Claude** specifically for failure diagnosis.
+
+The AI receives relevant payment failure context such as:
+
+```json
+{
+  "source": "subscription",
+  "step": "payment_authorization",
+  "reason": "mandate_revoked"
+}
 ```
 
-- **Diagnosis** — classify why the payment failed (Claude when configured, a deterministic keyword classifier otherwise)
-- **Strategy** — a fixed, deterministic diagnosis → strategy mapping (never chosen by the AI)
-- **Policy** — 7 deterministic checks; any failed required check blocks execution
-- **Action** — a `RecoveryAction` row is created only if policy allows
-- **Execution** — attempt the action through a provider adapter
-- **Verification** — re-fetch actual state and compare to expected, independent of the execution call's own success signal
-- **Case Lifecycle** — the `RecoveryCase` only reaches `RECOVERED` after verification passes
-- **Audit** — every step writes an immutable `AuditEvent`
+Claude returns a structured diagnosis:
 
-## 4. Architecture
+```json
+{
+  "category": "MANDATE_INVALID",
+  "confidence": 0.94,
+  "reasoning": "The recurring mandate is no longer valid."
+}
+```
 
-One Spring Boot 4 application (Java 21), PostgreSQL via Flyway-managed schema, a Vite/React frontend. No microservices, queue, cache, or scheduler — see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and [`docs/DECISIONS.md`](docs/DECISIONS.md) for the reasoning.
+The diagnosis then enters the deterministic RecoverSense pipeline.
 
-Backend packages: `diagnosis`, `policy`, `service` (lifecycle/orchestration), `razorpay`, `claude`, `settlement`, `dashboard`, `recovery` (HTTP), `domain`, `repository`.
+```text
+Payment Failure
+      │
+      ▼
+┌─────────────────┐
+│     Claude      │
+│    Diagnosis    │
+└────────┬────────┘
+         │
+         ▼
+   DiagnosisResult
+         │
+         ▼
+┌─────────────────┐
+│ StrategyRouter  │
+│  Deterministic  │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│   PolicyEngine  │
+│  Deterministic  │
+└────────┬────────┘
+         │
+         ▼
+      Execution
+         │
+         ▼
+     Verification
+```
 
-## 5. Safety principles
+## Why doesn't AI control execution?
 
-- **AI diagnoses, it does not authorize.** The LLM (or its deterministic stand-in) only classifies a failure. Strategy is derived by a fixed, non-AI mapping (`StrategyRouter`); policy is evaluated by a separate deterministic engine (`PolicyEngine`) that never takes AI output as an input.
-- **Policy fails closed.** Any check with unknown/missing evidence is treated as FAIL, not skipped or assumed-pass.
-- **Execution is not recovery.** A provider call returning success only moves an action to `EXECUTED`. The case only reaches `RECOVERED` after a separate, independent verification step confirms it.
-- **No silent duplicate recovery.** A payment that already has a `RECOVERED` case is rejected (HTTP 409) before any new case, decision, or action — and therefore before any provider call — is created (M1.22).
+Because financial recovery requires deterministic authorization and predictable behavior.
 
-## 6. At-Risk Payments flow
+Claude does **not**:
 
-`GET /api/dashboard/payments/at-risk` returns every `FAILED` payment that has no `OPEN` or `RECOVERED` recovery case — i.e. payments RecoverSense hasn't already started or finished recovering. The frontend's At-Risk Payments screen lists these with a **Recover** action that calls `POST /api/recovery/payments/{paymentId}/recover`, which runs diagnosis → strategy → policy → execution synchronously and returns the outcome.
+* Authorize payments
+* Choose merchant policy
+* Bypass policy checks
+* Execute financial actions
+* Decide whether recovery is successful
 
-**Two-phase for actions that need a human step (M1.25):** when execution requires something outside RecoverSense — a human paying a hosted Razorpay Payment Link — `recover()` stops at `EXECUTED_AWAITING_VERIFICATION` rather than auto-verifying. A separate `POST /api/recovery/cases/{recoveryCaseId}/verify` independently re-fetches provider state and only then transitions the case to `RECOVERED`. This never re-executes and never creates a second action — see `docs/DECISIONS.md` ADR-013.
+### Core principle
 
-**Verification can be retried until paid (M1.26):** an unpaid Payment Link genuinely means "not yet", not "never" — `POST /cases/{id}/verify` may be called again after a `FAILED` result, and each call is still an independent re-fetch, never cached or assumed. Only a genuinely `VERIFIED` result is terminal — see `docs/DECISIONS.md` ADR-016.
+> **AI diagnoses. Deterministic systems authorize. External systems execute. RecoverSense verifies.**
 
-**Real Razorpay payment ingestion (M1.26):** `POST /api/dashboard/payments/sync` pulls the operator's real Razorpay Test Mode failed payments (`GET /v1/payments`, a small bounded page) into RecoverSense, insert-only and idempotent by Razorpay's own payment id — never updates an existing row, never creates a `RecoveryCase`, never triggers recovery. The frontend never calls Razorpay directly. See `docs/DECISIONS.md` ADR-017.
+---
 
-## 7. Re-recovery protection
+# 🔀 Adaptive Recovery Strategies
 
-If a payment already has a `RECOVERED` `RecoveryCase`, `POST /api/recovery/payments/{paymentId}/recover` returns **409 Conflict** before touching the database further or calling any provider. `Payment.status` intentionally never changes away from `FAILED` after recovery (see `docs/DECISIONS.md` ADR-012) — `RecoveryCase.status = RECOVERED` is the sole authoritative recovery signal, and it's what both the at-risk query and this guard check against.
+Different failure diagnoses lead to different recovery strategies.
 
-## 8. Razorpay integration
+| Failure Diagnosis             | Recovery Strategy  |
+| ----------------------------- | ------------------ |
+| `INSUFFICIENT_FUNDS`          | Wait + Retry       |
+| `TEMPORARY_FAILURE`           | Wait + Retry       |
+| `MANDATE_INVALID`             | Re-acquire Mandate |
+| `CARD_ISSUE`                  | Payment Link       |
+| `REPEATED_FAILURE`            | Payment Link       |
+| `HIGH_RISK / COMPLEX_FAILURE` | Escalate           |
+| `SUBSCRIPTION_CANCELLED`      | Stop               |
 
-`razorpay.key-id`/`razorpay.key-secret` (unset by default) gate a real `RestClient`-backed `RecoveryActionExecutor`/`RecoveryActionVerifier` pair that creates and checks Razorpay Payment Links in Test Mode (`RazorpayAutoConfiguration`). Without credentials configured, every strategy's execution falls through to `NotImplementedRecoveryActionExecutor`, which honestly reports `EXECUTION_UNAVAILABLE` rather than fabricating a result.
+The mapping is deterministic.
 
-**Independent of Razorpay credentials:** the "payment already settled elsewhere" policy check (`not_already_settled_elsewhere`) is backed only by `UnavailableSettlementVerifier` outside the `demo` profile, which always answers UNKNOWN — no real settlement source is wired in production. Because `PolicyEngine` fails closed on unknown evidence, **every recovery attempt outside the demo profile evaluates to `BLOCKED`** at the policy stage, regardless of Razorpay credentials. This is intentional, documented fail-closed behavior, not a bug.
+Claude provides the diagnosis.
 
-**Demo profile only (M1.25/M1.26):** `DemoSettlementVerifier` supplies one explicit, clearly-labeled SIMULATED `NOT_SETTLED` answer for the seeded demo payment id (`pay_demo_payment_link`), so that payment can legitimately reach `ALLOWED` and exercise a real Razorpay Test Mode Payment Link end to end. An operator can additionally designate one of their own real synced payments the same way via `demo.settlement.extra-not-settled-payment-ids` (still demo-profile only, still explicit per id). Every other payment, including under the demo profile, is still governed by the same fail-closed rule as production — see `docs/RAZORPAY_INTEGRATION.md` and [Known limitations](#17-known-limitations).
+`StrategyRouter` determines the corresponding strategy.
 
-**A real synced payment typically still blocks** (M1.26): a plain `GET /v1/payments` record carries no subscription-state evidence, so `Payment.subscriptionStatus` is left `null` rather than guessed — `subscription_state_valid` legitimately fails, on top of P06 above. This is not a defect: it's the same fail-closed principle demonstrated with real provider data, and it's why the demo keeps one deliberately-seeded payment as the guaranteed successful path rather than depending on an arbitrary real payment reaching `ALLOWED`.
+---
 
-## 9. Claude integration
+# 🛡️ Policy Firewall
 
-`claude.api-key` (unset by default) gates a real Claude-backed `DiagnosisProvider` (`ClaudeAutoConfiguration`). Without it, `SimulatedDiagnosisProvider` — a deterministic keyword classifier wrapping the same taxonomy — is always registered instead, tagged `DiagnosisSource.SIMULATED` so a reader can never mistake it for a real Claude result. The rest of the pipeline (strategy, policy, execution, verification) behaves identically either way; only the diagnosis source changes.
+A recovery recommendation is **not automatically permission to execute**.
 
-## 10. Dashboard
+Before any recovery action is created, RecoverSense evaluates deterministic merchant policies.
 
-`GET /api/dashboard/metrics` and `GET /api/dashboard/cases/{id}/audit` back an Overview screen (revenue at risk, recovered revenue, recovery rate, verified actions, policy blocks, recent cases, strategy mix, audit trail) and an At-Risk Payments screen. All figures come from persisted `RecoveryCase`/`RecoveryDecision`/`RecoveryAction`/`AuditEvent` rows — never hardcoded or synthetic.
+## Seven Policy Checks
 
-## 11. Local setup
+```text
+1. Retry limit
+2. Subscription state
+3. Customer active status
+4. Duplicate recovery protection
+5. Amount limit
+6. Already settled elsewhere
+7. State / evidence freshness
+```
 
-Prerequisites: Java 21, Maven Wrapper (bundled), Docker (for PostgreSQL), Node.js for the frontend.
+Every required check must have valid evidence.
+
+## Fail-Closed Behavior
+
+```text
+Evidence available + valid
+          │
+          ▼
+         PASS
+
+
+Evidence unavailable / unknown
+          │
+          ▼
+         FAIL
+          │
+          ▼
+        BLOCK
+```
+
+RecoverSense never assumes that an unknown condition is safe.
+
+### Example
+
+```text
+Amount: ₹75,000
+Policy Limit: ₹50,000
+
+        ↓
+
+Amount Limit Check: FAIL
+
+        ↓
+
+POLICY BLOCKED
+
+        ↓
+
+No Action Created
+No Provider Call
+```
+
+---
+
+# 💳 Execution
+
+Only after policy approval does RecoverSense create a `RecoveryAction`.
+
+The action is executed through a provider adapter.
+
+Currently, the real Razorpay Test Mode execution path supports:
+
+```text
+PAYMENT_LINK
+```
+
+The flow is:
+
+```text
+Policy Allowed
+      ↓
+Create RecoveryAction
+      ↓
+Create Razorpay Payment Link
+      ↓
+EXECUTED_AWAITING_VERIFICATION
+      ↓
+Customer Pays
+      ↓
+Independent Verification
+```
+
+Other strategies such as:
+
+```text
+WAIT_RETRY
+REACQUIRE_MANDATE
+```
+
+currently report:
+
+```text
+EXECUTION_UNAVAILABLE
+```
+
+rather than pretending that an action happened.
+
+> **RecoverSense never fabricates a successful recovery.**
+
+---
+
+# 🔍 Independent Verification
+
+One of the most important design principles of RecoverSense is:
+
+> **A successful provider API call does not automatically mean money was recovered.**
+
+Execution and recovery are separate states.
+
+```text
+ACTION CREATED
+      ↓
+POLICY ALLOWED
+      ↓
+ACTION EXECUTED
+      ↓
+AWAITING VERIFICATION
+      ↓
+Re-fetch provider state
+      ↓
+Compare actual state
+with expected state
+      ↓
+   ┌───────┴───────┐
+   │               │
+   ▼               ▼
+ VERIFIED        FAILED
+   │
+   ▼
+RECOVERED
+```
+
+For a Payment Link:
+
+```text
+Create Payment Link
+        ↓
+EXECUTED_AWAITING_VERIFICATION
+        ↓
+Customer Pays
+        ↓
+Verify Payment
+        ↓
+Fresh Razorpay Re-fetch
+        ↓
+Payment Confirmed
+        ↓
+VERIFIED
+        ↓
+RecoveryCase = RECOVERED
+```
+
+Verification can be retried if the customer has not paid yet.
+
+Every verification performs a fresh provider re-fetch.
+
+---
+
+# 🔒 Duplicate Recovery Protection
+
+RecoverSense prevents duplicate recovery attempts.
+
+If a payment already has:
+
+```text
+RecoveryCase.status = RECOVERED
+```
+
+another recovery attempt returns:
+
+```text
+HTTP 409 CONFLICT
+```
+
+before creating:
+
+* Another recovery case
+* Another decision
+* Another action
+* Another provider call
+
+The authoritative recovery signal is:
+
+```text
+RecoveryCase = RECOVERED
+```
+
+`Payment.status` intentionally remains `FAILED`.
+
+---
+
+# 🧾 Complete Audit Trail
+
+Every important recovery transition creates an immutable `AuditEvent`.
+
+### Successful Flow
+
+```text
+FAILURE_DETECTED
+        ↓
+AI_DIAGNOSIS_COMPLETE
+        ↓
+STRATEGY_SELECTED
+        ↓
+POLICY_CHECK
+        ↓
+POLICY_ALLOWED
+        ↓
+ACTION_EXECUTED
+        ↓
+BUSINESS_STATE_VERIFIED
+        ↓
+RECOVERY_COMPLETED
+```
+
+### Blocked Flow
+
+```text
+FAILURE_DETECTED
+        ↓
+AI_DIAGNOSIS_COMPLETE
+        ↓
+STRATEGY_SELECTED
+        ↓
+POLICY_CHECK
+        ↓
+POLICY_BLOCKED
+```
+
+This makes every recovery decision explainable and auditable.
+
+---
+
+# 🏗️ System Architecture
+
+```text
+                         ┌─────────────────────┐
+                         │      RAZORPAY       │
+                         │    Test Mode APIs   │
+                         └──────────┬──────────┘
+                                    │
+                         Failed Payments / State
+                                    │
+                                    ▼
+┌──────────────────────────────────────────────────────────┐
+│                     RECOVERSENSE                         │
+│                                                          │
+│  ┌──────────────────────┐                                │
+│  │ Recovery Orchestrator│                                │
+│  └──────────┬───────────┘                                │
+│             │                                            │
+│             ▼                                            │
+│  ┌──────────────────────┐                                │
+│  │ Diagnosis Provider   │◄────────── Claude API          │
+│  └──────────┬───────────┘                                │
+│             │                                            │
+│             ▼                                            │
+│  ┌──────────────────────┐                                │
+│  │    StrategyRouter    │                                │
+│  │     Deterministic    │                                │
+│  └──────────┬───────────┘                                │
+│             │                                            │
+│             ▼                                            │
+│  ┌──────────────────────┐                                │
+│  │     PolicyEngine     │                                │
+│  │    7 Safety Checks   │                                │
+│  └──────────┬───────────┘                                │
+│             │                                            │
+│        ┌────┴─────┐                                      │
+│        │          │                                      │
+│      BLOCK      ALLOW                                    │
+│        │          │                                      │
+│        │          ▼                                      │
+│        │   ┌──────────────┐                              │
+│        │   │ Recovery     │                              │
+│        │   │ Action       │                              │
+│        │   └──────┬───────┘                              │
+│        │          │                                      │
+│        │          ▼                                      │
+│        │   ┌──────────────┐                              │
+│        │   │ Razorpay     │                              │
+│        │   │ Executor     │                              │
+│        │   └──────┬───────┘                              │
+│        │          │                                      │
+│        │          ▼                                      │
+│        │   ┌──────────────┐                              │
+│        │   │ Verification │                              │
+│        │   │   Re-fetch    │                             │
+│        │   └──────┬───────┘                              │
+│        │          │                                      │
+│        │          ▼                                      │
+│        │      VERIFIED                                    │
+│        │          │                                      │
+│        └──────────┴───────────────┐                       │
+│                                   ▼                       │
+│                           ┌──────────────┐                │
+│                           │ AuditService │                │
+│                           └──────┬───────┘                │
+│                                  │                        │
+└──────────────────────────────────┼────────────────────────┘
+                                   │
+                                   ▼
+                          ┌─────────────────┐
+                          │   PostgreSQL    │
+                          │                 │
+                          │ Payments        │
+                          │ RecoveryCases   │
+                          │ Decisions       │
+                          │ Actions         │
+                          │ AuditEvents     │
+                          └────────┬────────┘
+                                   │
+                                   ▼
+                          ┌─────────────────┐
+                          │ React Dashboard │
+                          │                 │
+                          │ Overview        │
+                          │ At-Risk         │
+                          │ Cases           │
+                          │ Audit Trail     │
+                          │ Metrics         │
+                          │ Integrations    │
+                          └─────────────────┘
+```
+
+---
+
+# 🧩 Backend Architecture
+
+RecoverSense is implemented as one modular Spring Boot application.
+
+```text
+backend/src/main/java/com/recoversense/
+
+├── diagnosis/
+│   ├── DiagnosisProvider
+│   ├── ClaudeDiagnosisProvider
+│   └── SimulatedDiagnosisProvider
+│
+├── policy/
+│   └── PolicyEngine
+│
+├── service/
+│   ├── RecoveryOrchestrationService
+│   ├── StrategyRouter
+│   ├── VerificationService
+│   └── AuditService
+│
+├── razorpay/
+│   ├── RazorpayClient
+│   ├── RecoveryActionExecutor
+│   └── RecoveryActionVerifier
+│
+├── claude/
+│   └── Claude integration
+│
+├── settlement/
+│   └── Settlement verification
+│
+├── recovery/
+│   └── REST APIs
+│
+├── dashboard/
+│   └── Dashboard APIs
+│
+├── domain/
+│   ├── Payment
+│   ├── RecoveryCase
+│   ├── RecoveryDecision
+│   ├── RecoveryAction
+│   └── AuditEvent
+│
+└── repository/
+```
+
+---
+
+# 🖥️ Dashboard
+
+RecoverSense provides a React + TypeScript dashboard for operators.
+
+## Overview
+
+Displays persisted recovery information such as:
+
+* Revenue at risk
+* Recovered revenue
+* Recovery rate
+* Verified actions
+* Policy blocks
+* Recent recovery cases
+* Strategy distribution
+
+## At-Risk Payments
+
+Shows failed payments that have no active or recovered recovery case.
+
+Operators can click:
+
+```text
+Recover
+```
+
+to trigger the recovery pipeline.
+
+## Recovery Cases
+
+Shows recovery lifecycle and outcomes.
+
+## Audit Trail
+
+Shows the complete decision history for a recovery case.
+
+## Integrations
+
+Shows provider integration state.
+
+All dashboard metrics are derived from persisted database records.
+
+**No hardcoded recovery results are used.**
+
+---
+
+# 🔄 At-Risk Payment Flow
+
+```text
+GET /api/dashboard/payments/at-risk
+                │
+                ▼
+       Failed Payments
+                │
+                ▼
+       No OPEN/RECOVERED Case
+                │
+                ▼
+        Operator clicks
+            "Recover"
+                │
+                ▼
+POST /api/recovery/payments/{paymentId}/recover
+                │
+                ▼
+            Diagnosis
+                ↓
+             Strategy
+                ↓
+              Policy
+                ↓
+             Action
+                ↓
+            Execution
+                ↓
+           Verification
+                ↓
+          Case Lifecycle
+                ↓
+              Audit
+```
+
+---
+
+# 💰 Razorpay Integration
+
+RecoverSense integrates with Razorpay Test Mode.
+
+## Payment Ingestion
+
+```text
+POST /api/dashboard/payments/sync
+                ↓
+GET /v1/payments
+                ↓
+Recent failed payments
+                ↓
+RecoverSense Database
+```
+
+The sync is:
+
+* Read-only against Razorpay
+* Insert-only
+* Idempotent by Razorpay payment ID
+* Limited to a bounded recent page
+* Never automatically starts recovery
+
+The frontend never calls Razorpay directly.
+
+---
+
+# 🔐 Real vs Simulated
+
+RecoverSense explicitly distinguishes real integrations from simulated components.
+
+| Capability                               | Status                         |
+| ---------------------------------------- | ------------------------------ |
+| Deterministic diagnosis                  | ✅ Real                         |
+| Claude diagnosis                         | ✅ Real when API key configured |
+| Strategy routing                         | ✅ Real                         |
+| 7-check policy engine                    | ✅ Real                         |
+| Recovery lifecycle                       | ✅ Real                         |
+| Duplicate recovery protection            | ✅ Real                         |
+| Audit trail                              | ✅ Real                         |
+| Razorpay Test Mode payment sync          | ✅ Real                         |
+| Razorpay Test Mode Payment Link creation | ✅ Real                         |
+| Razorpay Payment Link verification       | ✅ Real                         |
+| Two-phase execution + verification       | ✅ Real                         |
+| WAIT + RETRY execution                   | ⚠️ Not implemented             |
+| REACQUIRE MANDATE execution              | ⚠️ Not implemented             |
+| Production settlement source             | ⚠️ Not wired                   |
+| Production payment processing            | ❌ Out of scope                 |
+
+## Claude Fallback
+
+When `claude.api-key` is not configured, RecoverSense uses a deterministic keyword classifier as the diagnosis provider.
+
+It is explicitly tagged as:
+
+```text
+DiagnosisSource.SIMULATED
+```
+
+The downstream pipeline remains identical:
+
+```text
+              Diagnosis Provider
+                      │
+              ┌───────┴───────┐
+              │               │
+              ▼               ▼
+         Claude API      Deterministic
+         configured         fallback
+              │               │
+              └───────┬───────┘
+                      ▼
+               DiagnosisResult
+                      │
+                      ▼
+               StrategyRouter
+                      │
+                      ▼
+                PolicyEngine
+                      │
+                      ▼
+                  Execute
+                      │
+                      ▼
+                 Verify
+```
+
+---
+
+# 🧪 Demo Scenarios
+
+RecoverSense provides two complementary demo scenarios.
+
+## Scenario 1 — Safe Policy Rejection
+
+Payment:
+
+```text
+pay_demo_mandate_revoked
+```
+
+Flow:
+
+```text
+Payment Failed
+      ↓
+Diagnosis:
+MANDATE_INVALID
+      ↓
+Strategy:
+REACQUIRE_MANDATE
+      ↓
+Policy Evaluation
+      ↓
+BLOCKED
+      ↓
+Settlement evidence unavailable
+      ↓
+No Action Executed
+```
+
+### What this demonstrates
+
+RecoverSense refuses to act when it cannot verify that the action is safe.
+
+This demonstrates the **fail-closed policy design**.
+
+---
+
+# 💳 Scenario 2 — Real End-to-End Recovery
+
+Payment:
+
+```text
+pay_demo_payment_link
+```
+
+Flow:
+
+```text
+Payment Failed
+      ↓
+Diagnosis:
+REPEATED_FAILURE
+      ↓
+Strategy:
+PAYMENT_LINK
+      ↓
+Policy:
+ALLOWED
+      ↓
+Create Real Razorpay Test Mode
+Payment Link
+      ↓
+EXECUTED_AWAITING_VERIFICATION
+      ↓
+Customer Pays
+      ↓
+Verify Payment
+      ↓
+Fresh Razorpay Re-fetch
+      ↓
+VERIFIED
+      ↓
+RecoveryCase:
+RECOVERED
+```
+
+Then clicking Recover again demonstrates:
+
+```text
+HTTP 409 CONFLICT
+```
+
+with no duplicate recovery action or Payment Link.
+
+---
+
+# 📊 Real Batch Demo
+
+RecoverSense can also pull the operator's own Razorpay Test Mode payments.
+
+```text
+At-Risk Payments
+       ↓
+Sync Razorpay Test Mode
+       ↓
+GET /v1/payments
+       ↓
+Recent failed payments
+       ↓
+Persist in RecoverSense
+       ↓
+Display REAL payments
+```
+
+Real synced payments are labelled:
+
+```text
+REAL
+```
+
+while seeded demo payments are labelled:
+
+```text
+DEMO
+```
+
+This keeps real provider data clearly separated from deterministic demo data.
+
+---
+
+# 🗄️ Data Model
+
+The core domain is relational:
+
+```text
+Payment
+   │
+   └── RecoveryCase
+           │
+           ├── RecoveryDecision
+           │
+           ├── RecoveryAction
+           │
+           └── AuditEvent
+```
+
+PostgreSQL acts as the persistent source of truth for:
+
+* Payment state
+* Recovery state
+* Decisions
+* Actions
+* Verification
+* Audit history
+* Dashboard metrics
+
+---
+
+# 🔌 API Surface
+
+### Sync Razorpay payments
+
+```http
+POST /api/dashboard/payments/sync
+```
+
+### Get at-risk payments
+
+```http
+GET /api/dashboard/payments/at-risk
+```
+
+### Start recovery
+
+```http
+POST /api/recovery/payments/{paymentId}/recover
+```
+
+### Verify recovery
+
+```http
+POST /api/recovery/cases/{recoveryCaseId}/verify
+```
+
+### Dashboard metrics
+
+```http
+GET /api/dashboard/metrics
+```
+
+### Case audit
+
+```http
+GET /api/dashboard/cases/{id}/audit
+```
+
+---
+
+# 🛠️ Technology Stack
+
+| Layer              | Technology         |
+| ------------------ | ------------------ |
+| Backend            | Java 21            |
+| Framework          | Spring Boot 4      |
+| Database           | PostgreSQL         |
+| Database Migration | Flyway             |
+| ORM                | Spring Data JPA    |
+| AI                 | Claude API         |
+| Payment Provider   | Razorpay Test Mode |
+| Frontend           | React + TypeScript |
+| Build Tool         | Vite               |
+| Styling            | Tailwind CSS       |
+| Charts             | Recharts           |
+| Infrastructure     | Docker             |
+
+---
+
+# 🏛️ Why a Modular Monolith?
+
+RecoverSense intentionally uses a single Spring Boot application instead of microservices.
+
+The buildathon problem does not require:
+
+* Kafka
+* Redis
+* Kubernetes
+* Multiple microservices
+* Distributed orchestration
+
+Adding those technologies would increase operational complexity without solving a core problem.
+
+Instead, RecoverSense focuses complexity where it matters:
+
+```text
+Diagnosis
+   ↓
+Decision
+   ↓
+Policy
+   ↓
+Execution
+   ↓
+Verification
+```
+
+---
+
+# ▶️ Running RecoverSense Locally
+
+## Prerequisites
+
+* Java 21
+* Node.js
+* Docker
+* Maven Wrapper
+
+## 1. Start PostgreSQL
 
 ```powershell
-# start PostgreSQL 17 (host port 5433 — see docs/DECISIONS.md ADR-009)
 docker start recoversense-postgres
-# or, first time: docker compose -f infra/docker-compose.yml up -d
 ```
 
-## 12. Running backend
+Or first time:
+
+```powershell
+docker compose -f infra/docker-compose.yml up -d
+```
+
+---
+
+## 2. Start Backend
 
 ```powershell
 cd backend
 .\mvnw.cmd spring-boot:run
 ```
 
-Serves on `http://localhost:8081`. Health check: `/actuator/health`.
+Backend:
 
-## 13. Running frontend
+```text
+http://localhost:8081
+```
+
+Health check:
+
+```text
+http://localhost:8081/actuator/health
+```
+
+---
+
+## 3. Start Frontend
 
 ```powershell
 cd frontend
@@ -99,16 +1042,35 @@ npm install
 npm run dev
 ```
 
-Serves on `http://localhost:5173` by default; talks to the backend at `http://localhost:8081` (override with `VITE_API_BASE_URL`).
+Frontend:
 
-## 14. Running tests
+```text
+http://localhost:5173
+```
+
+---
+
+## 4. Run Demo Profile
+
+```powershell
+cd backend
+.\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=demo"
+```
+
+This seeds the deterministic demo payments.
+
+---
+
+## 5. Run Tests
+
+### Backend
 
 ```powershell
 cd backend
 .\mvnw.cmd test
 ```
 
-Requires the PostgreSQL container running (Flyway migrations run against it). Real-Razorpay/Claude-credentialed tests are skipped automatically when the relevant credentials are not configured — see [`docs/TEST_PLAN.md`](docs/TEST_PLAN.md).
+### Frontend
 
 ```powershell
 cd frontend
@@ -116,75 +1078,203 @@ npm run build
 npm run lint
 ```
 
-## 15. Demo walkthrough
+---
 
-See [`docs/DEMO.md`](docs/DEMO.md) for the full judge-facing script, including the real-Razorpay-batch path. Scenarios:
-
-**No credentials needed** — `pay_demo_mandate_revoked`: Recover → diagnosis `MANDATE_INVALID` → strategy `REACQUIRE_MANDATE` → policy `BLOCKED` (no settlement source wired for this payment) → result card and audit trail show exactly which check failed and why. This demonstrates RecoverSense refusing to act on payment state it cannot verify, rather than guessing.
-
-**Real Razorpay Test Mode needed** — `pay_demo_payment_link`: Recover → diagnosis `REPEATED_FAILURE` (real Claude, if `claude.api-key` is configured) → strategy `PAYMENT_LINK` → policy `ALLOWED` (this one payment's settlement evidence is simulated, see §8) → a **real** Payment Link is created (`EXECUTED_AWAITING_VERIFICATION`, never "Recovered" yet) → open the link, pay it in Test Mode → click **Verify payment** (retry as needed until it's actually paid) → independent re-fetch confirms it → `VERIFIED` / case `RECOVERED`. Clicking Recover again on either payment (once recovered) demonstrates the M1.22 409 re-recovery guard with no duplicate case/action/Payment Link created.
-
-**Real batch (M1.26)** — click **Sync Razorpay Test Mode** on the At-Risk Payments screen to pull the operator's own real Razorpay Test Mode failed payments alongside the two seeded ones. Real synced payments are labeled `REAL` (vs `DEMO`) and typically block at policy honestly (see §8) unless explicitly opted in via `demo.settlement.extra-not-settled-payment-ids`.
-
-### Reproducible demo data
-
-`DemoDataSeeder` (`backend/src/main/java/com/recoversense/demo/DemoDataSeeder.java`) inserts the two deterministic `FAILED` payments above, each with no `RecoveryCase`, so both appear in At-Risk Payments. It only runs under the `demo` Spring profile and is idempotent:
-
-```powershell
-.\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=demo"
-```
-
-It never runs under the default profile, never touches an existing payment, and creates nothing beyond those two seed rows.
-
-## 16. Real vs simulated
-
-| Capability | Status |
-|---|---|
-| Diagnosis engine (deterministic classifier) | ✅ Real |
-| Diagnosis via Claude | ✅ Real, requires `claude.api-key`; structured (json_schema) response, validated, fails honestly (never a fabricated fallback) if malformed/unavailable |
-| Strategy routing | ✅ Real, deterministic — never chosen by Claude |
-| Policy engine (7 checks) | ✅ Real |
-| Recovery lifecycle / case state machine | ✅ Real |
-| Re-recovery duplicate guard (409) | ✅ Real |
-| Audit trail | ✅ Real |
-| Razorpay payment ingestion (`GET /v1/payments`) | ✅ Real Test Mode integration (M1.26), requires `razorpay.key-id`/`key-secret`; read-only, insert-only, bounded page |
-| Razorpay Payment Link creation | ✅ Real Test Mode integration, requires `razorpay.key-id`/`key-secret` |
-| Razorpay Payment Link verification | ✅ Real Test Mode integration, independent re-fetch, retriable until paid (M1.26) |
-| Two-phase execution → human payment → verification | ✅ Real (M1.25/M1.26): `POST /recover` executes, `POST /cases/{id}/verify` independently confirms, retriable |
-| Settlement/"already settled elsewhere" check | ⚠️ Always UNKNOWN in production; fails closed by design. Demo profile: SIMULATED `NOT_SETTLED` for explicitly configured payment id(s) only, UNKNOWN for every other |
-| Real synced payment reaching policy `ALLOWED` | ⚠️ Not automatic — no subscription-state evidence in a plain payment record; requires explicit demo-profile opt-in (§8) |
-| `WAIT_RETRY` execution | ❌ Not implemented (reports `EXECUTION_UNAVAILABLE` honestly) |
-| `REACQUIRE_MANDATE` execution | ❌ Not implemented (reports `EXECUTION_UNAVAILABLE` honestly) |
-| Dashboard metrics (including batch counts) | ✅ Real, derived from persisted data — never hardcoded |
-| Production payment processing | ❌ Out of scope |
-
-## 17. Known limitations
-
-- **Every recovery attempt outside the demo profile evaluates to `BLOCKED`** at the policy stage, because the settlement check has no real backing source in production and fails closed on UNKNOWN. Reaching `EXECUTED`/`VERIFIED`/`RECOVERED` against a real provider requires either the demo profile's explicitly-simulated settlement input (§8) or a test that wires `SimulatedSettlementVerifier` directly. This is intentional: closing it in production needs a real settlement source, out of scope for this milestone.
-- Only `PAYMENT_LINK` (via `REPEATED_FAILURE` diagnosis) has a real execution path at all, and only with Razorpay credentials configured; `WAIT_RETRY` and `REACQUIRE_MANDATE` always report execution unavailable.
-- A real synced payment has no subscription-state evidence, so it legitimately fails `subscription_state_valid` and blocks by default (§8) — the demo's guaranteed successful path stays the deliberately-seeded payment (or an operator-designated real one) rather than an arbitrary synced payment.
-- The real Payment Link URL is only ever available in the same response that created it (never persisted — see `RecoveryAction.providerUrl`); if the browser is reloaded between execution and verification, the operator loses the ability to re-open the link, though verification itself is unaffected (it's keyed by the case, not the URL, and can still be retried).
-- Razorpay payment sync fetches a small bounded page (`count=20`) of the most recent payments, not the full account history — a failed payment older than the most recent 20 payments won't be found by sync.
-- No scheduler/webhook listener — recovery (and sync) is triggered manually (via the API/UI), not automatically on payment failure.
-- Frontend has five views (Overview, At-Risk Payments, Recovery Cases, Audit Trail, Integrations); Policy Rules and Settings were deliberately not built (no real backend behind them — see M1.24).
-
-## 18. Final project status
-
-Core pipeline (diagnosis → strategy → policy → action → execution → verification → lifecycle → audit), the dashboard, At-Risk Payments, and the re-recovery guard are implemented and covered by the backend test suite (`.\mvnw.cmd test` in `backend/`).
-
-## Repository
+# 📁 Repository Structure
 
 ```text
 recoversense/
-├── backend/    # Spring Boot application
-├── frontend/   # Vite/React dashboard
-├── docs/       # specs, decisions, project state
-├── infra/      # docker-compose for local PostgreSQL
-├── scripts/    # (reserved; demo data is seeded in-process — see §15)
+│
+├── backend/
+│   └── Spring Boot application
+│
+├── frontend/
+│   └── React + TypeScript dashboard
+│
+├── docs/
+│   ├── PRODUCT_SPEC.md
+│   ├── ARCHITECTURE.md
+│   ├── POLICY_SPEC.md
+│   ├── VERIFICATION_SPEC.md
+│   ├── DECISIONS.md
+│   ├── PROJECT_STATE.md
+│   └── DEMO.md
+│
+├── infra/
+│   └── docker-compose.yml
+│
 └── tests/
 ```
 
-## Read first
+---
+
+# 🚦 Project Status
+
+## Implemented
+
+* ✅ Adaptive diagnosis pipeline
+* ✅ Claude diagnosis integration
+* ✅ Deterministic diagnosis fallback
+* ✅ Deterministic strategy routing
+* ✅ Seven-check policy engine
+* ✅ Fail-closed policy behavior
+* ✅ Recovery case lifecycle
+* ✅ Recovery action lifecycle
+* ✅ Duplicate recovery protection
+* ✅ Immutable audit trail
+* ✅ Dashboard metrics
+* ✅ At-Risk Payments
+* ✅ Razorpay Test Mode payment ingestion
+* ✅ Razorpay Payment Link creation
+* ✅ Independent Payment Link verification
+* ✅ Human-in-the-loop verification
+
+## Current Limitations
+
+* ⚠️ WAIT + RETRY execution is not implemented
+* ⚠️ REACQUIRE MANDATE execution is not implemented
+* ⚠️ Production settlement verification is not wired
+* ⚠️ Recovery is manually triggered
+* ⚠️ No scheduler/webhook listener
+* ⚠️ Razorpay sync currently reads a bounded recent page
+* ⚠️ Production payment processing is outside the buildathon scope
+
+These limitations are intentionally surfaced rather than hidden.
+
+---
+
+# 🎯 The RecoverSense Decision Model
+
+The entire system can be reduced to five questions:
+
+```text
+┌─────────────────────────────┐
+│ WHY did the payment fail?   │
+│           ↓                 │
+│ Diagnosis / Claude          │
+├─────────────────────────────┤
+│ WHAT should we do?          │
+│           ↓                 │
+│ Deterministic Strategy      │
+├─────────────────────────────┤
+│ MAY we do it?               │
+│           ↓                 │
+│ Policy Firewall             │
+├─────────────────────────────┤
+│ DID we execute it?          │
+│           ↓                 │
+│ Provider Execution          │
+├─────────────────────────────┤
+│ DID it actually work?       │
+│           ↓                 │
+│ Independent Verification    │
+└─────────────────────────────┘
+```
+
+---
+
+# 🏆 Why RecoverSense?
+
+Traditional recovery:
+
+```text
+Payment Failed
+      ↓
+Retry
+      ↓
+Retry Again
+```
+
+RecoverSense:
+
+```text
+Payment Failed
+      ↓
+Understand WHY
+      ↓
+Choose the RIGHT strategy
+      ↓
+Check whether it is ALLOWED
+      ↓
+Execute safely
+      ↓
+Verify the REAL outcome
+      ↓
+Only then mark it RECOVERED
+```
+
+The key difference is:
+
+> **RecoverSense treats payment recovery as a diagnosis-and-decision problem, not simply a retry-timing problem.**
+
+---
+
+# 💡 One-Minute Judge Explanation
+
+> **RecoverSense is an adaptive revenue recovery engine for failed recurring payments. Instead of blindly retrying every failure, it first diagnoses why the payment failed using Claude, maps that diagnosis to a deterministic recovery strategy, and then runs that strategy through a seven-check policy firewall. Only approved actions can execute. After execution, RecoverSense independently re-fetches the payment state and only marks the case as recovered when the real business outcome is verified. Every step is recorded in an audit trail.**
+>
+> **Our core design principle is simple: AI diagnoses, deterministic systems authorize, Razorpay executes, and RecoverSense verifies.**
+
+---
+
+# 🔥 RecoverSense in One Diagram
+
+```text
+                    FAILED PAYMENT
+                           │
+                           ▼
+                    ┌────────────┐
+                    │  DIAGNOSE  │
+                    │ Claude AI  │
+                    └──────┬─────┘
+                           │
+                           ▼
+                    ┌────────────┐
+                    │  STRATEGY  │
+                    │Deterministic
+                    └──────┬─────┘
+                           │
+                           ▼
+                    ┌────────────┐
+                    │   POLICY   │
+                    │ 7 Checks   │
+                    └──────┬─────┘
+                           │
+                     ┌─────┴─────┐
+                     │           │
+                   BLOCK       ALLOW
+                     │           │
+                     │           ▼
+                     │      ┌──────────┐
+                     │      │ EXECUTE  │
+                     │      └────┬─────┘
+                     │           │
+                     │           ▼
+                     │      ┌──────────┐
+                     │      │ VERIFY   │
+                     │      └────┬─────┘
+                     │           │
+                     │           ▼
+                     │      ┌──────────┐
+                     │      │RECOVERED │
+                     │      └────┬─────┘
+                     │           │
+                     └─────┬─────┘
+                           ▼
+                     ┌────────────┐
+                     │   AUDIT    │
+                     └──────┬─────┘
+                            ▼
+                     ┌────────────┐
+                     │ DASHBOARD  │
+                     └────────────┘
+```
+
+---
+
+# 📚 Documentation
+
+For deeper technical details, see:
 
 1. `CLAUDE.md`
 2. `docs/PRODUCT_SPEC.md`
@@ -193,3 +1283,16 @@ recoversense/
 5. `docs/VERIFICATION_SPEC.md`
 6. `docs/DECISIONS.md`
 7. `docs/PROJECT_STATE.md`
+8. `docs/DEMO.md`
+
+---
+
+## RecoverSense
+
+**Adaptive revenue recovery for recurring payments.**
+
+> **A sixth sense for revenue recovery.**
+
+*Built by Shubham Kumar· Razorpay AI Buildathon 2026*
+
+*Email: shubham27034@gmail.com*
